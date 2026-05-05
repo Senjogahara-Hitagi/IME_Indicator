@@ -60,8 +60,8 @@ impl IndicatorOverlay {
         offset_y: i32,
     ) -> Self {
         let gdi_token = Self::init_gdiplus();
-        // 我们在内部将渲染区域放大一些，以便容纳更大的字体而不被剪裁
-        let render_size = (size as f32 * 1.5) as i32;
+        // 渲染区域扩大到 size 的 2.5 倍，确保大字体不被裁剪
+        let render_size = (size as f32 * 2.5) as i32;
         let hwnd = Self::create_window(name, render_size);
 
         // 初始化字体
@@ -74,10 +74,10 @@ impl IndicatorOverlay {
                 null_mut(),
                 &mut font_family,
             );
-            // 字体大小设为基础 size 的 120%，让字看起来更大
+            // 字体大小设为基础 size 的 2 倍，确保足够清晰巨大
             let _ = GdipCreateFont(
                 font_family,
-                size as f32 * 1.2,
+                size as f32 * 2.0,
                 1, // FontStyleBold
                 windows::Win32::Graphics::GdiPlus::UnitPixel,
                 &mut font,
@@ -86,7 +86,7 @@ impl IndicatorOverlay {
 
         Self {
             hwnd,
-            size: render_size, // 存储实际窗口大小
+            size: render_size, 
             color_cn,
             color_en,
             offset_x,

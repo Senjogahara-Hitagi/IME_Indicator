@@ -43,14 +43,14 @@ impl Default for Config {
             caret_enable: true,
             caret_color_cn: parse_color("#FF7800A0"),
             caret_color_en: parse_color("#0078FF30"),
-            caret_size: 8,
+            caret_size: 16,
             caret_offset_x: 0,
             caret_offset_y: 0,
             caret_show_en: true,
             mouse_enable: true,
             mouse_color_cn: parse_color("#FF7800A0"),
             mouse_color_en: parse_color("#0078FF30"),
-            mouse_size: 8,
+            mouse_size: 16,
             mouse_offset_x: 2,
             mouse_offset_y: 18,
             mouse_show_en: true,
@@ -177,7 +177,8 @@ fn load_config() -> Config {
 }
 
 pub(crate) fn get_config_path() -> PathBuf {
-    std::env::current_exe().unwrap().parent().unwrap().join("config.toml")
+    let exe_path = std::env::current_exe().unwrap();
+    exe_path.parent().unwrap().join("config.toml")
 }
 
 fn generate_toml_template() -> String {
@@ -193,7 +194,7 @@ enable = true               # 是否显示托盘图标 (false 时完全后台运
 enable = true               # 是否启用文本光标提示
 color_cn = "#FF7800A0"    # 中文状态颜色 (#RRGGBBAA)
 color_en = "#0078FF30"    # 英文状态颜色
-size = 8                    # 提示球大小
+size = 16                   # 字体基础大小 (单位：像素)
 offset_x = 0
 offset_y = 0
 show_en = true              # 英文状态下是否显示
@@ -202,7 +203,7 @@ show_en = true              # 英文状态下是否显示
 enable = true               # 是否开启鼠标提示
 color_cn = "#FF7800A0"    # 中文状态颜色
 color_en = "#0078FF30"    # 英文状态颜色
-size = 8                    # 提示球大小
+size = 16                   # 字体基础大小
 offset_x = 2
 offset_y = 18
 show_en = true              # 英文状态下是否显示
