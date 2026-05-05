@@ -72,11 +72,11 @@ impl IndicatorOverlay {
                 null_mut(),
                 &mut font_family,
             );
-            // 字体大小设为窗口大小的 80%
+            // 字体大小设为窗口大小的 100%
             let _ = GdipCreateFont(
                 font_family,
-                size as f32 * 0.8,
-                0, // FontStyleRegular
+                size as f32,
+                1, // FontStyleBold
                 windows::Win32::Graphics::GdiPlus::UnitPixel,
                 &mut font,
             );
