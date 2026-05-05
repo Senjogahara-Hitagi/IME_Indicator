@@ -66,11 +66,42 @@ fn send_message_timeout(hwnd: HWND, msg: u32, wparam: usize, lparam: isize) -> O
     }
 }
 
+use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState;
+use windows::Win32::UI::Input::KeyboardAndMouse::VK_CAPITAL;
+
+/// 获取 Caps Lock 状态
+pub fn is_caps_lock_on() -> bool {
+    unsafe {
+        // GetKeyState 返回值的最低位表示切换状态 (toggle state)
+        (GetKeyState(VK_CAPITAL.0 as i32) & 1) != 0
+    }
+}
+
+/// 指示器状态枚举
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum IndicatorState {
+    ChineseCapsLockOn,   // 中文模式 + 大写锁定
+    ChineseCapsLockOff,  // 中文模式 + 小写
+    EnglishCapsLockOn,   // 英文模式 + 大写锁定
+    EnglishCapsLockOff,  // 英文模式 + 小写
+}
+
+impl IndicatorState {
+    pub fn get_text(&self) -> &str {
+        match self {
+            Self::ChineseCapsLockOn => "A",
+            Self::ChineseCapsLockOff => "中",
+            Self::EnglishCapsLockOn => "A",
+            Self::EnglishCapsLockOff => "a",
+        }
+    }
+}
+
 /// 检测是否为中文输入模式
 pub fn is_chinese_mode() -> bool {
     let hwnd = get_focused_window();
     let ime_hwnd = get_ime_window(hwnd);
-    
+
     if ime_hwnd.0.is_null() {
         return false;
     }
@@ -82,9 +113,23 @@ pub fn is_chinese_mode() -> bool {
     }
 
     // 获取转换模式并检测是否包含 NATIVE 标志 (中文)
-    if let Some(conversion_mode) = send_message_timeout(ime_hwnd, WM_IME_CONTROL, IMC_GETCONVERSIONMODE, 0) {
+    if let Some(conversion_mode) = send_message_timeout(ime_hwnd, WM_IME_CONTROL, IMC_GETCONVERSIONMODE, 0) {   
         return (conversion_mode as u32 & IME_CMODE_NATIVE) != 0;
     }
 
     false
 }
+
+/// 获取当前综合状态
+pub fn get_indicator_state() -> IndicatorState {
+    let is_chinese = is_chinese_mode();
+    let is_caps = is_caps_lock_on();
+
+    match (is_chinese, is_caps) {
+        (true, true) => IndicatorState::ChineseCapsLockOn,
+        (true, false) => IndicatorState::ChineseCapsLockOff,
+        (false, true) => IndicatorState::EnglishCapsLockOn,
+        (false, false) => IndicatorState::EnglishCapsLockOff,
+    }
+}
+

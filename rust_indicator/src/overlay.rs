@@ -1,5 +1,6 @@
 //! GDI+ 悬浮窗渲染模块
 
+use crate::ime_detector::IndicatorState;
 use std::ptr::null_mut;
 use windows::Win32::Foundation::{COLORREF, HMODULE, HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
@@ -7,9 +8,11 @@ use windows::Win32::Graphics::Gdi::{
     BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
 };
 use windows::Win32::Graphics::GdiPlus::{
-    GdipCreateFromHDC, GdipCreateSolidFill, GdipDeleteBrush, GdipDeleteGraphics,
-    GdipFillEllipse, GdipSetSmoothingMode, GdiplusShutdown, GdiplusStartup,
-    GdiplusStartupInput, GpBrush, GpGraphics, GpSolidFill, SmoothingModeAntiAlias,
+    GdipCreateFont, GdipCreateFontFamilyFromName, GdipCreateFromHDC, GdipCreateSolidFill,
+    GdipDeleteBrush, GdipDeleteFont, GdipDeleteFontFamily, GdipDeleteGraphics, GdipDrawString,
+    GdipSetSmoothingMode, GdipSetTextRenderingHint, GdiplusShutdown,
+    GdiplusStartup, GdiplusStartupInput, GpBrush, GpFont, GpFontFamily,
+    RectF, SmoothingModeAntiAlias, TextRenderingHintAntiAlias,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -19,7 +22,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     ULW_ALPHA, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
     WS_EX_TRANSPARENT, WS_POPUP,
 };
-use windows::core::PCWSTR;
+use windows::core::{HSTRING, PCWSTR};
 
 /// BLENDFUNCTION 结构体
 #[repr(C)]
@@ -42,6 +45,8 @@ pub struct IndicatorOverlay {
     offset_x: i32,
     offset_y: i32,
     gdi_token: usize,
+    font_family: *mut GpFontFamily,
+    font: *mut GpFont,
 }
 
 impl IndicatorOverlay {
@@ -57,6 +62,26 @@ impl IndicatorOverlay {
         let gdi_token = Self::init_gdiplus();
         let hwnd = Self::create_window(name, size);
 
+        // 初始化字体
+        let mut font_family = null_mut();
+        let mut font = null_mut();
+        unsafe {
+            let font_name = HSTRING::from("Microsoft YaHei");
+            let _ = GdipCreateFontFamilyFromName(
+                PCWSTR(font_name.as_ptr()),
+                null_mut(),
+                &mut font_family,
+            );
+            // 字体大小设为窗口大小的 80%
+            let _ = GdipCreateFont(
+                font_family,
+                size as f32 * 0.8,
+                0, // FontStyleRegular
+                windows::Win32::Graphics::GdiPlus::UnitPixel,
+                &mut font,
+            );
+        }
+
         Self {
             hwnd,
             size,
@@ -65,6 +90,8 @@ impl IndicatorOverlay {
             offset_x,
             offset_y,
             gdi_token,
+            font_family,
+            font,
         }
     }
 
@@ -140,12 +167,20 @@ impl IndicatorOverlay {
     }
 
     /// 更新渲染内容和屏幕位置
-    pub fn update(&self, x: i32, y: i32, is_chinese: bool, caret_h: i32) {
+    pub fn update(&self, x: i32, y: i32, state: IndicatorState, caret_h: i32) {
+        let is_chinese = match state {
+            IndicatorState::ChineseCapsLockOn | IndicatorState::ChineseCapsLockOff => true,
+            _ => false,
+        };
+
         let color = if is_chinese {
             self.color_cn
         } else {
             self.color_en
         };
+
+        let text = state.get_text();
+        let wide_text: Vec<u16> = text.encode_utf16().collect();
 
         unsafe {
             let screen_dc = GetDC(None);
@@ -172,23 +207,41 @@ impl IndicatorOverlay {
             let old_bitmap = SelectObject(mem_dc, h_bitmap);
 
             // GDI+ 绘制
-            let mut graphics: *mut GpGraphics = null_mut();
+            let mut graphics = null_mut();
             GdipCreateFromHDC(mem_dc, &mut graphics);
             GdipSetSmoothingMode(graphics, SmoothingModeAntiAlias);
+            GdipSetTextRenderingHint(graphics, TextRenderingHintAntiAlias);
 
-            let mut brush: *mut GpSolidFill = null_mut();
+            let mut brush = null_mut();
             GdipCreateSolidFill(color, &mut brush);
-            GdipFillEllipse(
+
+            // 绘制文本
+            let rect = RectF {
+                X: 0.0,
+                Y: 0.0,
+                Width: self.size as f32,
+                Height: self.size as f32,
+            };
+
+            // 创建居中格式
+            let mut format = null_mut();
+            let _ = windows::Win32::Graphics::GdiPlus::GdipCreateStringFormat(0, 0, &mut format);
+            let _ = windows::Win32::Graphics::GdiPlus::GdipSetStringFormatAlign(format, windows::Win32::Graphics::GdiPlus::StringAlignmentCenter);
+            let _ = windows::Win32::Graphics::GdiPlus::GdipSetStringFormatLineAlign(format, windows::Win32::Graphics::GdiPlus::StringAlignmentCenter);
+
+            let _ = GdipDrawString(
                 graphics,
+                PCWSTR(wide_text.as_ptr()),
+                wide_text.len() as i32,
+                self.font,
+                &rect,
+                format,
                 brush as *mut GpBrush,
-                0.0,
-                0.0,
-                self.size as f32,
-                self.size as f32,
             );
 
-            GdipDeleteBrush(brush as *mut GpBrush);
-            GdipDeleteGraphics(graphics);
+            let _ = windows::Win32::Graphics::GdiPlus::GdipDeleteStringFormat(format);
+            let _ = GdipDeleteBrush(brush as *mut GpBrush);
+            let _ = GdipDeleteGraphics(graphics);
 
             // UpdateLayeredWindow
             let dest_point = POINT {
@@ -262,6 +315,8 @@ impl IndicatorOverlay {
     pub fn cleanup(&self) {
         unsafe {
             let _ = DestroyWindow(self.hwnd);
+            let _ = GdipDeleteFont(self.font);
+            let _ = GdipDeleteFontFamily(self.font_family);
             GdiplusShutdown(self.gdi_token);
         }
     }

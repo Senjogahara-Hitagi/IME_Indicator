@@ -16,7 +16,7 @@ use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, LoadIconW, IDI_APPLI
 
 use caret_detector::CaretDetector;
 use cursor_detector::CursorDetector;
-use ime_detector::is_chinese_mode;
+use ime_detector::{get_indicator_state, IndicatorState};
 use overlay::IndicatorOverlay;
 use tray::TrayManager;
 
@@ -128,7 +128,7 @@ fn run_detector_loop(running: Arc<AtomicBool>) {
     let track_interval = Duration::from_millis(config::track_poll_interval_ms());
 
     let mut last_state_check_time = Instant::now();
-    let mut chinese_mode = false;
+    let mut state = IndicatorState::EnglishCapsLockOff;
     let mut caret_active = false;
     let mut mouse_active = false;
 
@@ -138,14 +138,18 @@ fn run_detector_loop(running: Arc<AtomicBool>) {
 
         // A. 状态检测 (100ms)
         if now.duration_since(last_state_check_time) >= state_interval {
-            chinese_mode = is_chinese_mode();
+            state = get_indicator_state();
+            let is_chinese = match state {
+                IndicatorState::ChineseCapsLockOn | IndicatorState::ChineseCapsLockOff => true,
+                _ => false,
+            };
 
             // Caret 状态判断
             if config::caret_enable() {
                 if let Some(ref overlay) = caret_overlay {
                     let caret_pos = caret_detector.get_caret_pos();
                     
-                    let should_caret = caret_pos.is_some() && (chinese_mode || config::caret_show_en());
+                    let should_caret = caret_pos.is_some() && (is_chinese || config::caret_show_en());
                     if should_caret != caret_active {
                         caret_active = should_caret;
                         if caret_active {
@@ -161,7 +165,7 @@ fn run_detector_loop(running: Arc<AtomicBool>) {
             if config::mouse_enable() {
                 if let Some(ref overlay) = mouse_overlay {
                     let target_cursor = cursor_detector.is_target_cursor();
-                    let should_mouse = target_cursor && (chinese_mode || config::mouse_show_en());
+                    let should_mouse = target_cursor && (is_chinese || config::mouse_show_en());
                     if should_mouse != mouse_active {
                         mouse_active = should_mouse;
                         if mouse_active {
@@ -182,7 +186,7 @@ fn run_detector_loop(running: Arc<AtomicBool>) {
         if config::caret_enable() && caret_active {
             if let Some(ref overlay) = caret_overlay {
                 if let Some((x, y, h)) = caret_detector.get_caret_pos() {
-                    overlay.update(x, y, chinese_mode, h);
+                    overlay.update(x, y, state, h);
                 }
             }
         }
@@ -193,7 +197,7 @@ fn run_detector_loop(running: Arc<AtomicBool>) {
                 let mut pt = POINT::default();
                 unsafe {
                     if GetCursorPos(&mut pt).is_ok() {
-                        overlay.update(pt.x, pt.y, chinese_mode, 0);
+                        overlay.update(pt.x, pt.y, state, 0);
                     }
                 }
             }
