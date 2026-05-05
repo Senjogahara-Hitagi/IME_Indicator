@@ -44,6 +44,7 @@ pub enum DetectionSource {
     UiaCaretRange,
     Ime,
     MsaaFallback,
+    CursorFallback,
     None,
 }
 
@@ -106,6 +107,12 @@ impl CaretDetector {
         // 第五级：MSAA 回退
         if let Some(pos) = self.get_pos_via_msaa_fallback() {
             self.last_source = DetectionSource::MsaaFallback;
+            return Some(pos);
+        }
+
+        // 第六级：如果确实有窗口处于编辑状态但无法获取位置，回退到鼠标位置
+        if let Some(pos) = self.get_pos_via_cursor_fallback() {
+            self.last_source = DetectionSource::CursorFallback;
             return Some(pos);
         }
 
@@ -476,6 +483,34 @@ impl CaretDetector {
                     if pt.x > -1000 && pt.y > -1000 {
                         let h = gui_info.rcCaret.bottom - gui_info.rcCaret.top;
                         return Some((pt.x, pt.y, h));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// 最后的手段：如果检测到当前窗口可能在编辑（有焦点窗口），但拿不到光标，就显示在鼠标位置
+    fn get_pos_via_cursor_fallback(&self) -> Option<CaretPos> {
+        unsafe {
+            let hwnd = GetForegroundWindow();
+            if hwnd.0.is_null() {
+                return None;
+            }
+
+            // 检查是否有 GUI 焦点
+            let mut gui_info = GUITHREADINFO {
+                cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+                ..Default::default()
+            };
+
+            if GetGUIThreadInfo(0, &mut gui_info).is_ok() {
+                // 如果有焦点窗口或者有光标句柄（即使坐标为0），说明正在编辑
+                if !gui_info.hwndFocus.0.is_null() || !gui_info.hwndCaret.0.is_null() {
+                    let mut pt = POINT::default();
+                    if windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt).is_ok() {
+                        // 返回鼠标位置，高度设为 0 (overlay 逻辑会处理偏移)
+                        return Some((pt.x, pt.y, 0));
                     }
                 }
             }
