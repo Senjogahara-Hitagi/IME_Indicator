@@ -1,23 +1,51 @@
+param(
+    [switch]$Console,
+    [switch]$Build,
+    [switch]$Release,
+    [switch]$Debug,
+    [switch]$StopOnly
+)
+
 $ErrorActionPreference = "Stop"
+
+if ($Release -and $Debug) {
+    throw "Use either -Release or -Debug, not both."
+}
 
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $RustDir = Join-Path $ProjectRoot "rust_indicator"
 $AppName = "IME-Indicator"
-$ExePath = Join-Path $RustDir "target\release\$AppName.exe"
+$DefaultProfile = "release"
+$ProfileDir = if ($Debug) { "debug" } elseif ($Release) { "release" } else { $DefaultProfile }
+$ExePath = Join-Path $RustDir "target\$ProfileDir\$AppName.exe"
 
 Set-Location $RustDir
 
-Write-Host "Checking for existing $AppName processes..."
+function Get-CargoArgs {
+    param(
+        [string]$Command
+    )
+
+    $args = @($Command)
+    if ($ProfileDir -eq "release") {
+        $args += "--release"
+    }
+
+    return ,$args
+}
+
 Get-Process $AppName -ErrorAction SilentlyContinue | Stop-Process -Force
 
-Write-Host "Building $AppName in release mode..."
-cargo build --release
+if ($StopOnly) {
+    exit 0
+}
 
-if (Test-Path $ExePath) {
-    Write-Host "Successfully built $AppName."
-    Write-Host "Starting $AppName (Hidden)..."
-    Start-Process -FilePath $ExePath -WorkingDirectory $RustDir -WindowStyle Hidden
-    Write-Host "Process started. You can find it in the system tray if enabled."
+if ($Build -or -not (Test-Path $ExePath)) {
+    & cargo @(Get-CargoArgs -Command "build")
+}
+
+if ($Console) {
+    & cargo @(Get-CargoArgs -Command "run")
 } else {
-    Write-Error "Failed to find built executable at $ExePath"
+    Start-Process -FilePath $ExePath -WorkingDirectory $RustDir -WindowStyle Hidden
 }
