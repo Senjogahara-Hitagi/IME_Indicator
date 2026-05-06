@@ -164,7 +164,7 @@ impl IndicatorOverlay {
     }
 
     pub fn update(&self, x: i32, y: i32, state: IndicatorState, caret_h: i32) {
-        let color = if state.is_chinese() {
+        let theme_color = if state.is_chinese() {
             self.color_cn
         } else {
             self.color_en
@@ -202,8 +202,9 @@ impl IndicatorOverlay {
             GdipSetSmoothingMode(graphics, SmoothingModeAntiAlias);
             GdipSetTextRenderingHint(graphics, TextRenderingHintAntiAlias);
 
+            // 背景：使用配置的颜色（带透明度）
             let mut background_brush = null_mut();
-            GdipCreateSolidFill(BACKGROUND_COLOR, &mut background_brush);
+            GdipCreateSolidFill(theme_color, &mut background_brush);
             let _ = GdipFillRectangle(
                 graphics,
                 background_brush as *mut GpBrush,
@@ -213,8 +214,9 @@ impl IndicatorOverlay {
                 (self.size as f32) - BACKGROUND_MARGIN * 2.0,
             );
 
+            // 前景文本：使用亮白色
             let mut brush = null_mut();
-            GdipCreateSolidFill(color, &mut brush);
+            GdipCreateSolidFill(0xFFFFFFFF, &mut brush);
 
             let rect = RectF {
                 X: 0.0,
@@ -252,7 +254,7 @@ impl IndicatorOverlay {
             let dest_point = if self.is_mouse_overlay {
                 POINT {
                     x: x + self.offset_x - self.size,
-                    y: y + self.offset_y,
+                    y: y + self.offset_y - self.size / 2,
                 }
             } else {
                 POINT {

@@ -41,17 +41,17 @@ impl Default for Config {
             poll_track_interval_ms: 10,
             tray_enable: true,
             caret_enable: true,
-            caret_color_cn: parse_color("#FF7800A0"),
-            caret_color_en: parse_color("#0078FF30"),
+            caret_color_cn: parse_color("#76E3A7A0"),
+            caret_color_en: parse_color("#F4C060A0"),
             caret_size: 16,
             caret_offset_x: 0,
             caret_offset_y: 0,
             caret_show_en: true,
             mouse_enable: true,
-            mouse_color_cn: parse_color("#FF7800A0"),
-            mouse_color_en: parse_color("#0078FF30"),
+            mouse_color_cn: parse_color("#76E3A7A0"),
+            mouse_color_en: parse_color("#F4C060A0"),
             mouse_size: 16,
-            mouse_offset_x: -14,
+            mouse_offset_x: -20,
             mouse_offset_y: 18,
             mouse_show_en: true,
             mouse_target_cursors: vec![32513, 32512],
@@ -192,8 +192,8 @@ enable = true               # 是否显示托盘图标 (false 时完全后台运
 
 [caret]
 enable = true               # 是否启用文本光标提示
-color_cn = "#FF7800A0"    # 中文状态颜色 (#RRGGBBAA)
-color_en = "#0078FF30"    # 英文状态颜色
+color_cn = "#76E3A7A0"    # 中文状态颜色 (#RRGGBBAA)
+color_en = "#F4C060A0"    # 英文状态颜色
 size = 16                   # 字体基础大小 (单位：像素)
 offset_x = 0
 offset_y = 0
@@ -201,10 +201,10 @@ show_en = true              # 英文状态下是否显示
 
 [mouse]
 enable = true               # 是否开启鼠标提示
-color_cn = "#FF7800A0"    # 中文状态颜色
-color_en = "#0078FF30"    # 英文状态颜色
+color_cn = "#76E3A7A0"    # 中文状态颜色
+color_en = "#F4C060A0"    # 英文状态颜色
 size = 16                   # 字体基础大小
-offset_x = -14
+offset_x = -20
 offset_y = 18
 show_en = true              # 英文状态下是否显示
 target_cursors = [32513, 32512]  # I-Beam, Normal
