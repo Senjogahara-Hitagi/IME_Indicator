@@ -9,11 +9,12 @@ use windows::Win32::Graphics::Gdi::{
     BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
 };
 use windows::Win32::Graphics::GdiPlus::{
-    GdipCreateFont, GdipCreateFontFamilyFromName, GdipCreateFromHDC, GdipCreateSolidFill,
-    GdipDeleteBrush, GdipDeleteFont, GdipDeleteFontFamily, GdipDeleteGraphics, GdipDrawString,
-    GdipFillRectangle, GdipSetSmoothingMode, GdipSetTextRenderingHint, GdiplusShutdown,
-    GdiplusStartup, GdiplusStartupInput, GpBrush, GpFont, GpFontFamily, RectF,
-    SmoothingModeAntiAlias, TextRenderingHintAntiAlias,
+    GdipAddPathArc, GdipClosePathFigure, GdipCreateFont, GdipCreateFontFamilyFromName,
+    GdipCreateFromHDC, GdipCreatePath, GdipCreateSolidFill, GdipDeleteBrush, GdipDeleteFont,
+    GdipDeleteFontFamily, GdipDeleteGraphics, GdipDeletePath, GdipDrawString, GdipFillPath,
+    GdipMeasureString, GdipSetSmoothingMode, GdipSetTextRenderingHint, GdiplusShutdown,
+    GdiplusStartup, GdiplusStartupInput, FillMode, GpBrush, GpFont, GpFontFamily, GpPath,
+    RectF, SmoothingModeAntiAlias, TextRenderingHintAntiAlias, UnitPixel,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -34,14 +35,18 @@ struct BLENDFUNCTION {
 
 const AC_SRC_OVER: u8 = 0x00;
 const AC_SRC_ALPHA: u8 = 0x01;
-const BACKGROUND_COLOR: u32 = 0xB0000000;
-const BACKGROUND_MARGIN: f32 = 3.0;
+const BACKGROUND_COLOR: u32 = 0xAA0C1216;
+const TEXT_COLOR_CN: u32 = 0xFF82D6FF;
+const TEXT_COLOR_EN: u32 = 0xFFF4C060;
+const PADDING_X: f32 = 6.0;
+const PADDING_Y: f32 = 2.0;
+const CORNER_RADIUS: f32 = 8.0;
+const MIN_BUBBLE_WIDTH: f32 = 24.0;
+const MIN_BUBBLE_HEIGHT: f32 = 18.0;
 
 pub struct IndicatorOverlay {
     hwnd: HWND,
-    size: i32,
-    color_cn: u32,
-    color_en: u32,
+    canvas_size: i32,
     offset_x: i32,
     offset_y: i32,
     gdi_token: usize,
@@ -54,14 +59,15 @@ impl IndicatorOverlay {
     pub fn new(
         name: &str,
         size: i32,
-        color_cn: u32,
-        color_en: u32,
+        _color_cn: u32,
+        _color_en: u32,
         offset_x: i32,
         offset_y: i32,
     ) -> Self {
         let gdi_token = Self::init_gdiplus();
-        let render_size = (size as f32 * 2.5) as i32;
-        let hwnd = Self::create_window(name, render_size);
+        let font_px = (size as f32 + 3.0).max(18.0);
+        let canvas_size = (size as f32 * 3.0).max(48.0) as i32;
+        let hwnd = Self::create_window(name, canvas_size);
 
         let mut font_family = null_mut();
         let mut font = null_mut();
@@ -72,20 +78,12 @@ impl IndicatorOverlay {
                 null_mut(),
                 &mut font_family,
             );
-            let _ = GdipCreateFont(
-                font_family,
-                size as f32 * 2.0,
-                1,
-                windows::Win32::Graphics::GdiPlus::UnitPixel,
-                &mut font,
-            );
+            let _ = GdipCreateFont(font_family, font_px, 1, UnitPixel, &mut font);
         }
 
         Self {
             hwnd,
-            size: render_size,
-            color_cn,
-            color_en,
+            canvas_size,
             offset_x,
             offset_y,
             gdi_token,
@@ -164,12 +162,11 @@ impl IndicatorOverlay {
     }
 
     pub fn update(&self, x: i32, y: i32, state: IndicatorState, caret_h: i32) {
-        let theme_color = if state.is_chinese() {
-            self.color_cn
+        let text_color = if state.is_chinese() {
+            TEXT_COLOR_CN
         } else {
-            self.color_en
+            TEXT_COLOR_EN
         };
-
         let text = state.get_text();
         let wide_text: Vec<u16> = text.encode_utf16().collect();
 
@@ -180,8 +177,8 @@ impl IndicatorOverlay {
             let bmi = BITMAPINFO {
                 bmiHeader: BITMAPINFOHEADER {
                     biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                    biWidth: self.size,
-                    biHeight: self.size,
+                    biWidth: self.canvas_size,
+                    biHeight: self.canvas_size,
                     biPlanes: 1,
                     biBitCount: 32,
                     biCompression: BI_RGB.0,
@@ -194,36 +191,12 @@ impl IndicatorOverlay {
             let h_bitmap =
                 CreateDIBSection(mem_dc, &bmi, DIB_RGB_COLORS, &mut ppv_bits, None, 0)
                     .unwrap_or_default();
-
             let old_bitmap = SelectObject(mem_dc, h_bitmap);
 
             let mut graphics = null_mut();
             GdipCreateFromHDC(mem_dc, &mut graphics);
             GdipSetSmoothingMode(graphics, SmoothingModeAntiAlias);
             GdipSetTextRenderingHint(graphics, TextRenderingHintAntiAlias);
-
-            // 背景：使用配置的颜色（带透明度）
-            let mut background_brush = null_mut();
-            GdipCreateSolidFill(theme_color, &mut background_brush);
-            let _ = GdipFillRectangle(
-                graphics,
-                background_brush as *mut GpBrush,
-                BACKGROUND_MARGIN,
-                BACKGROUND_MARGIN,
-                (self.size as f32) - BACKGROUND_MARGIN * 2.0,
-                (self.size as f32) - BACKGROUND_MARGIN * 2.0,
-            );
-
-            // 前景文本：使用亮白色
-            let mut brush = null_mut();
-            GdipCreateSolidFill(0xFFFFFFFF, &mut brush);
-
-            let rect = RectF {
-                X: 0.0,
-                Y: 0.0,
-                Width: self.size as f32,
-                Height: self.size as f32,
-            };
 
             let mut format = null_mut();
             let _ = windows::Win32::Graphics::GdiPlus::GdipCreateStringFormat(0, 0, &mut format);
@@ -236,37 +209,77 @@ impl IndicatorOverlay {
                 windows::Win32::Graphics::GdiPlus::StringAlignmentCenter,
             );
 
+            let layout_rect = RectF {
+                X: 0.0,
+                Y: 0.0,
+                Width: self.canvas_size as f32,
+                Height: self.canvas_size as f32,
+            };
+            let mut bounds = RectF::default();
+            let _ = GdipMeasureString(
+                graphics,
+                PCWSTR(wide_text.as_ptr()),
+                wide_text.len() as i32,
+                self.font,
+                &layout_rect,
+                format,
+                &mut bounds,
+                null_mut(),
+                null_mut(),
+            );
+
+            let bubble_width = (bounds.Width + PADDING_X * 2.0).max(MIN_BUBBLE_WIDTH);
+            let bubble_height = (bounds.Height + PADDING_Y * 2.0).max(MIN_BUBBLE_HEIGHT);
+            let bubble_x = ((self.canvas_size as f32) - bubble_width) / 2.0;
+            let bubble_y = ((self.canvas_size as f32) - bubble_height) / 2.0;
+            let bubble_rect = RectF {
+                X: bubble_x,
+                Y: bubble_y,
+                Width: bubble_width,
+                Height: bubble_height,
+            };
+
+            let mut background_brush = null_mut();
+            GdipCreateSolidFill(BACKGROUND_COLOR, &mut background_brush);
+            let mut path = null_mut();
+            let _ = GdipCreatePath(FillMode(0), &mut path);
+            add_rounded_rect(path, &bubble_rect, CORNER_RADIUS);
+            let _ = GdipFillPath(graphics, background_brush as *mut GpBrush, path);
+
+            let mut text_brush = null_mut();
+            GdipCreateSolidFill(text_color, &mut text_brush);
             let _ = GdipDrawString(
                 graphics,
                 PCWSTR(wide_text.as_ptr()),
                 wide_text.len() as i32,
                 self.font,
-                &rect,
+                &bubble_rect,
                 format,
-                brush as *mut GpBrush,
+                text_brush as *mut GpBrush,
             );
 
             let _ = windows::Win32::Graphics::GdiPlus::GdipDeleteStringFormat(format);
+            let _ = GdipDeletePath(path);
             let _ = GdipDeleteBrush(background_brush as *mut GpBrush);
-            let _ = GdipDeleteBrush(brush as *mut GpBrush);
+            let _ = GdipDeleteBrush(text_brush as *mut GpBrush);
             let _ = GdipDeleteGraphics(graphics);
 
             let dest_point = if self.is_mouse_overlay {
                 POINT {
-                    x: x + self.offset_x - self.size,
-                    y: y + self.offset_y - self.size / 2,
+                    x: x + self.offset_x - self.canvas_size,
+                    y: y + self.offset_y - self.canvas_size / 2,
                 }
             } else {
                 POINT {
-                    x: x + self.offset_x - self.size / 2,
-                    y: y + caret_h + self.offset_y - self.size / 2,
+                    x: x + self.offset_x - self.canvas_size / 2,
+                    y: y + caret_h + self.offset_y - self.canvas_size / 2,
                 }
             };
 
             let src_point = POINT { x: 0, y: 0 };
             let size = SIZE {
-                cx: self.size,
-                cy: self.size,
+                cx: self.canvas_size,
+                cy: self.canvas_size,
             };
             let blend = BLENDFUNCTION {
                 blend_op: AC_SRC_OVER,
@@ -329,6 +342,20 @@ impl IndicatorOverlay {
             let _ = GdipDeleteFontFamily(self.font_family);
             GdiplusShutdown(self.gdi_token);
         }
+    }
+}
+
+fn add_rounded_rect(path: *mut GpPath, rect: &RectF, radius: f32) {
+    unsafe {
+        let diameter = (radius * 2.0).min(rect.Width).min(rect.Height);
+        let right = rect.X + rect.Width - diameter;
+        let bottom = rect.Y + rect.Height - diameter;
+
+        let _ = GdipAddPathArc(path, rect.X, rect.Y, diameter, diameter, 180.0, 90.0);
+        let _ = GdipAddPathArc(path, right, rect.Y, diameter, diameter, 270.0, 90.0);
+        let _ = GdipAddPathArc(path, right, bottom, diameter, diameter, 0.0, 90.0);
+        let _ = GdipAddPathArc(path, rect.X, bottom, diameter, diameter, 90.0, 90.0);
+        let _ = GdipClosePathFigure(path);
     }
 }
 
