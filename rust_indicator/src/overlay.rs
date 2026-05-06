@@ -1,7 +1,8 @@
-//! GDI+ 悬浮窗渲染模块
+//! GDI+ overlay renderer.
 
 use crate::ime_detector::IndicatorState;
 use std::ptr::null_mut;
+use windows::core::{HSTRING, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HMODULE, HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetDC, ReleaseDC, SelectObject,
@@ -10,9 +11,9 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::Graphics::GdiPlus::{
     GdipCreateFont, GdipCreateFontFamilyFromName, GdipCreateFromHDC, GdipCreateSolidFill,
     GdipDeleteBrush, GdipDeleteFont, GdipDeleteFontFamily, GdipDeleteGraphics, GdipDrawString,
-    GdipSetSmoothingMode, GdipSetTextRenderingHint, GdiplusShutdown,
-    GdiplusStartup, GdiplusStartupInput, GpBrush, GpFont, GpFontFamily,
-    RectF, SmoothingModeAntiAlias, TextRenderingHintAntiAlias,
+    GdipFillRectangle, GdipSetSmoothingMode, GdipSetTextRenderingHint, GdiplusShutdown,
+    GdiplusStartup, GdiplusStartupInput, GpBrush, GpFont, GpFontFamily, RectF,
+    SmoothingModeAntiAlias, TextRenderingHintAntiAlias,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -22,9 +23,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     ULW_ALPHA, WNDCLASSEXW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
     WS_EX_TRANSPARENT, WS_POPUP,
 };
-use windows::core::{HSTRING, PCWSTR};
 
-/// BLENDFUNCTION 结构体
 #[repr(C)]
 struct BLENDFUNCTION {
     blend_op: u8,
@@ -35,8 +34,9 @@ struct BLENDFUNCTION {
 
 const AC_SRC_OVER: u8 = 0x00;
 const AC_SRC_ALPHA: u8 = 0x01;
+const BACKGROUND_COLOR: u32 = 0xB0000000;
+const BACKGROUND_MARGIN: f32 = 3.0;
 
-/// 指示器悬浮窗
 pub struct IndicatorOverlay {
     hwnd: HWND,
     size: i32,
@@ -47,10 +47,10 @@ pub struct IndicatorOverlay {
     gdi_token: usize,
     font_family: *mut GpFontFamily,
     font: *mut GpFont,
+    is_mouse_overlay: bool,
 }
 
 impl IndicatorOverlay {
-    /// 创建新的悬浮窗
     pub fn new(
         name: &str,
         size: i32,
@@ -60,11 +60,9 @@ impl IndicatorOverlay {
         offset_y: i32,
     ) -> Self {
         let gdi_token = Self::init_gdiplus();
-        // 渲染区域扩大到 size 的 2.5 倍，确保大字体不被裁剪
         let render_size = (size as f32 * 2.5) as i32;
         let hwnd = Self::create_window(name, render_size);
 
-        // 初始化字体
         let mut font_family = null_mut();
         let mut font = null_mut();
         unsafe {
@@ -74,11 +72,10 @@ impl IndicatorOverlay {
                 null_mut(),
                 &mut font_family,
             );
-            // 字体大小设为基础 size 的 2 倍，确保足够清晰巨大
             let _ = GdipCreateFont(
                 font_family,
                 size as f32 * 2.0,
-                1, // FontStyleBold
+                1,
                 windows::Win32::Graphics::GdiPlus::UnitPixel,
                 &mut font,
             );
@@ -86,7 +83,7 @@ impl IndicatorOverlay {
 
         Self {
             hwnd,
-            size: render_size, 
+            size: render_size,
             color_cn,
             color_en,
             offset_x,
@@ -94,10 +91,10 @@ impl IndicatorOverlay {
             gdi_token,
             font_family,
             font,
+            is_mouse_overlay: name.eq_ignore_ascii_case("Mouse"),
         }
     }
 
-    /// 初始化 GDI+
     fn init_gdiplus() -> usize {
         unsafe {
             let input = GdiplusStartupInput {
@@ -112,7 +109,6 @@ impl IndicatorOverlay {
         }
     }
 
-    /// 创建透明悬浮窗
     fn create_window(name: &str, size: i32) -> HWND {
         unsafe {
             let h_instance: HMODULE = GetModuleHandleW(None).unwrap_or_default();
@@ -127,7 +123,6 @@ impl IndicatorOverlay {
             ) -> LRESULT {
                 unsafe {
                     if msg == 0x0002 {
-                        // WM_DESTROY
                         return LRESULT(0);
                     }
                     DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -168,14 +163,8 @@ impl IndicatorOverlay {
         }
     }
 
-    /// 更新渲染内容和屏幕位置
     pub fn update(&self, x: i32, y: i32, state: IndicatorState, caret_h: i32) {
-        let is_chinese = match state {
-            IndicatorState::ChineseCapsLockOn | IndicatorState::ChineseCapsLockOff => true,
-            _ => false,
-        };
-
-        let color = if is_chinese {
+        let color = if state.is_chinese() {
             self.color_cn
         } else {
             self.color_en
@@ -208,16 +197,25 @@ impl IndicatorOverlay {
 
             let old_bitmap = SelectObject(mem_dc, h_bitmap);
 
-            // GDI+ 绘制
             let mut graphics = null_mut();
             GdipCreateFromHDC(mem_dc, &mut graphics);
             GdipSetSmoothingMode(graphics, SmoothingModeAntiAlias);
             GdipSetTextRenderingHint(graphics, TextRenderingHintAntiAlias);
 
+            let mut background_brush = null_mut();
+            GdipCreateSolidFill(BACKGROUND_COLOR, &mut background_brush);
+            let _ = GdipFillRectangle(
+                graphics,
+                background_brush as *mut GpBrush,
+                BACKGROUND_MARGIN,
+                BACKGROUND_MARGIN,
+                (self.size as f32) - BACKGROUND_MARGIN * 2.0,
+                (self.size as f32) - BACKGROUND_MARGIN * 2.0,
+            );
+
             let mut brush = null_mut();
             GdipCreateSolidFill(color, &mut brush);
 
-            // 绘制文本
             let rect = RectF {
                 X: 0.0,
                 Y: 0.0,
@@ -225,11 +223,16 @@ impl IndicatorOverlay {
                 Height: self.size as f32,
             };
 
-            // 创建居中格式
             let mut format = null_mut();
             let _ = windows::Win32::Graphics::GdiPlus::GdipCreateStringFormat(0, 0, &mut format);
-            let _ = windows::Win32::Graphics::GdiPlus::GdipSetStringFormatAlign(format, windows::Win32::Graphics::GdiPlus::StringAlignmentCenter);
-            let _ = windows::Win32::Graphics::GdiPlus::GdipSetStringFormatLineAlign(format, windows::Win32::Graphics::GdiPlus::StringAlignmentCenter);
+            let _ = windows::Win32::Graphics::GdiPlus::GdipSetStringFormatAlign(
+                format,
+                windows::Win32::Graphics::GdiPlus::StringAlignmentCenter,
+            );
+            let _ = windows::Win32::Graphics::GdiPlus::GdipSetStringFormatLineAlign(
+                format,
+                windows::Win32::Graphics::GdiPlus::StringAlignmentCenter,
+            );
 
             let _ = GdipDrawString(
                 graphics,
@@ -242,14 +245,22 @@ impl IndicatorOverlay {
             );
 
             let _ = windows::Win32::Graphics::GdiPlus::GdipDeleteStringFormat(format);
+            let _ = GdipDeleteBrush(background_brush as *mut GpBrush);
             let _ = GdipDeleteBrush(brush as *mut GpBrush);
             let _ = GdipDeleteGraphics(graphics);
 
-            // UpdateLayeredWindow
-            let dest_point = POINT {
-                x: x + self.offset_x - self.size / 2,
-                y: y + caret_h + self.offset_y - self.size / 2,
+            let dest_point = if self.is_mouse_overlay {
+                POINT {
+                    x: x + self.offset_x - self.size,
+                    y: y + self.offset_y,
+                }
+            } else {
+                POINT {
+                    x: x + self.offset_x - self.size / 2,
+                    y: y + caret_h + self.offset_y - self.size / 2,
+                }
             };
+
             let src_point = POINT { x: 0, y: 0 };
             let size = SIZE {
                 cx: self.size,
@@ -279,7 +290,6 @@ impl IndicatorOverlay {
             let _ = DeleteDC(mem_dc);
             let _ = ReleaseDC(None, screen_dc);
 
-            // 保持窗口在最顶层
             let _ = SetWindowPos(
                 self.hwnd,
                 HWND_TOPMOST,
@@ -290,7 +300,6 @@ impl IndicatorOverlay {
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
             );
 
-            // 处理消息
             let mut msg = MSG::default();
             while PeekMessageW(&mut msg, self.hwnd, 0, 0, PM_REMOVE).into() {
                 let _ = TranslateMessage(&msg);
@@ -299,21 +308,18 @@ impl IndicatorOverlay {
         }
     }
 
-    /// 显示窗口
     pub fn show(&self) {
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_SHOW);
         }
     }
 
-    /// 隐藏窗口
     pub fn hide(&self) {
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_HIDE);
         }
     }
 
-    /// 清理资源
     pub fn cleanup(&self) {
         unsafe {
             let _ = DestroyWindow(self.hwnd);

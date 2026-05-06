@@ -51,7 +51,7 @@ impl Default for Config {
             mouse_color_cn: parse_color("#FF7800A0"),
             mouse_color_en: parse_color("#0078FF30"),
             mouse_size: 16,
-            mouse_offset_x: 2,
+            mouse_offset_x: -14,
             mouse_offset_y: 18,
             mouse_show_en: true,
             mouse_target_cursors: vec![32513, 32512],
@@ -204,7 +204,7 @@ enable = true               # 是否开启鼠标提示
 color_cn = "#FF7800A0"    # 中文状态颜色
 color_en = "#0078FF30"    # 英文状态颜色
 size = 16                   # 字体基础大小
-offset_x = 2
+offset_x = -14
 offset_y = 18
 show_en = true              # 英文状态下是否显示
 target_cursors = [32513, 32512]  # I-Beam, Normal

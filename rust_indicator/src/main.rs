@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use windows::Win32::Foundation::POINT;
 use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, LoadIconW, IDI_APPLICATION};
 
-use caret_detector::CaretDetector;
+use caret_detector::{CaretDetector, DetectionSource};
 use cursor_detector::CursorDetector;
 use ime_detector::{get_indicator_state, IndicatorState};
 use overlay::IndicatorOverlay;
@@ -148,8 +148,11 @@ fn run_detector_loop(running: Arc<AtomicBool>) {
             if config::caret_enable() {
                 if let Some(ref overlay) = caret_overlay {
                     let caret_pos = caret_detector.get_caret_pos();
-                    
-                    let should_caret = caret_pos.is_some() && (is_chinese || config::caret_show_en());
+                    let has_real_caret = caret_pos.is_some()
+                        && !matches!(caret_detector.last_source, DetectionSource::CursorFallback);
+
+                    let should_caret =
+                        has_real_caret && (is_chinese || config::caret_show_en());
                     if should_caret != caret_active {
                         caret_active = should_caret;
                         if caret_active {
