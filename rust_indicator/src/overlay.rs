@@ -43,6 +43,9 @@ const PADDING_Y: f32 = 2.0;
 const CORNER_RADIUS: f32 = 8.0;
 const MIN_BUBBLE_WIDTH: f32 = 24.0;
 const MIN_BUBBLE_HEIGHT: f32 = 18.0;
+const CARET_MIN_ANCHOR_HEIGHT: f32 = 20.0;
+const CARET_GAP_Y: f32 = 2.0;
+const MOUSE_X_ANCHOR_RATIO: f32 = 0.75;
 
 pub struct IndicatorOverlay {
     hwnd: HWND,
@@ -266,13 +269,25 @@ impl IndicatorOverlay {
 
             let dest_point = if self.is_mouse_overlay {
                 POINT {
-                    x: x + self.offset_x - self.canvas_size,
-                    y: y + self.offset_y - self.canvas_size / 2,
+                    x: (x as f32
+                        + self.offset_x as f32
+                        - bubble_rect.Width * MOUSE_X_ANCHOR_RATIO
+                        - bubble_rect.X)
+                        .round() as i32,
+                    y: (y as f32 + self.offset_y as f32 - bubble_rect.Height * 0.5 - bubble_rect.Y)
+                        .round() as i32,
                 }
             } else {
+                let caret_anchor_h = (caret_h as f32).max(CARET_MIN_ANCHOR_HEIGHT);
                 POINT {
-                    x: x + self.offset_x - self.canvas_size / 2,
-                    y: y + caret_h + self.offset_y - self.canvas_size / 2,
+                    x: (x as f32 + self.offset_x as f32 - bubble_rect.Width * 0.5 - bubble_rect.X)
+                        .round() as i32,
+                    y: (y as f32
+                        + caret_anchor_h
+                        + self.offset_y as f32
+                        + CARET_GAP_Y
+                        - bubble_rect.Y)
+                        .round() as i32,
                 }
             };
 
