@@ -1,6 +1,5 @@
 # Rust
 rust_indicator/target/
-rust_indicator/config.toml
 
 # Python
 **/__pycache__/

@@ -178,7 +178,20 @@ fn load_config() -> Config {
 
 pub(crate) fn get_config_path() -> PathBuf {
     let exe_path = std::env::current_exe().unwrap();
-    exe_path.parent().unwrap().join("config.toml")
+    let exe_dir = exe_path.parent().unwrap();
+    let exe_local = exe_dir.join("config.toml");
+    if exe_local.exists() {
+        return exe_local;
+    }
+
+    if let Some(project_dir) = exe_dir.parent().and_then(|p| p.parent()) {
+        let repo_local = project_dir.join("config.toml");
+        if repo_local.exists() {
+            return repo_local;
+        }
+    }
+
+    exe_local
 }
 
 fn generate_toml_template() -> String {
