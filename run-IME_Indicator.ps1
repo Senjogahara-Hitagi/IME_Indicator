@@ -40,9 +40,8 @@ if ($StopOnly) {
     exit 0
 }
 
-if ($Build -or -not (Test-Path $ExePath)) {
-    & cargo @(Get-CargoArgs -Command "build")
-}
+# Default to rebuilding before every launch so hidden restarts pick up local edits.
+& cargo @(Get-CargoArgs -Command "build")
 
 if ($Console) {
     & cargo @(Get-CargoArgs -Command "run")
