@@ -13,7 +13,7 @@ color_cn = "#76E3A7A0"
 color_en = "#F4C060A0"
 size = 16
 offset_x = 0
-offset_y = 10
+offset_y = 14
 show_en = true
 
 [mouse]
@@ -21,7 +21,7 @@ enable = true
 color_cn = "#76E3A7A0"
 color_en = "#F4C060A0"
 size = 16
-offset_x = -20
+offset_x = -16
 offset_y = 18
 show_en = true
 target_cursors = [32513, 32512]

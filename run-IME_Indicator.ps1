@@ -18,6 +18,8 @@ $AppName = "IME-Indicator"
 $DefaultProfile = "release"
 $ProfileDir = if ($Debug) { "debug" } elseif ($Release) { "release" } else { $DefaultProfile }
 $ExePath = Join-Path $RustDir "target\$ProfileDir\$AppName.exe"
+$RepoConfigPath = Join-Path $RustDir "config.toml"
+$RuntimeConfigPath = Join-Path $RustDir "target\$ProfileDir\config.toml"
 
 Set-Location $RustDir
 
@@ -42,6 +44,10 @@ if ($StopOnly) {
 
 # Default to rebuilding before every launch so hidden restarts pick up local edits.
 & cargo @(Get-CargoArgs -Command "build")
+
+if (Test-Path $RepoConfigPath) {
+    Copy-Item -LiteralPath $RepoConfigPath -Destination $RuntimeConfigPath -Force
+}
 
 if ($Console) {
     & cargo @(Get-CargoArgs -Command "run")
