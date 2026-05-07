@@ -136,11 +136,11 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
             let id = wparam.0 as u32;
             match id {
                 IDM_EXIT => {
-                    PostQuitMessage(0);
+                    std::process::exit(0);
                 }
                 IDM_RESTART => {
                     restart_app();
-                    PostQuitMessage(0);
+                    std::process::exit(0);
                 }
                 IDM_CONFIG => {
                     open_config();
