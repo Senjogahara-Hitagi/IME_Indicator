@@ -1,4 +1,6 @@
 
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -16,13 +18,12 @@ use windows::Win32::Graphics::GdiPlus::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 
-use std::path::Path;
-
 const WM_TRAYICON: u32 = WM_USER + 1;
 const IDM_RESTART: u32 = 1001;
 const IDM_CONFIG: u32 = 1002;
 const IDM_ABOUT: u32 = 1003;
 const IDM_EXIT: u32 = 1004;
+static CONTEXT_MENU_OPEN: AtomicBool = AtomicBool::new(false);
 
 pub struct TrayManager {
     hwnd: HWND,
@@ -121,6 +122,10 @@ impl TrayManager {
     }
 }
 
+pub fn is_context_menu_open() -> bool {
+    CONTEXT_MENU_OPEN.load(Ordering::Relaxed)
+}
+
 unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_TRAYICON => {
@@ -161,6 +166,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
 }
 
 unsafe fn show_context_menu(hwnd: HWND) {
+    CONTEXT_MENU_OPEN.store(true, Ordering::Relaxed);
+
     let menu = CreatePopupMenu().unwrap();
     let _ = windows::Win32::UI::WindowsAndMessaging::AppendMenuW(
         menu,
@@ -199,7 +206,7 @@ unsafe fn show_context_menu(hwnd: HWND) {
     // 必须设置前台窗口，否则菜单点击外部不会消失
     let _ = SetForegroundWindow(hwnd);
     
-    TrackPopupMenu(
+    let _ = TrackPopupMenu(
         menu,
         TPM_LEFTALIGN | TPM_BOTTOMALIGN,
         pos.x,
@@ -207,9 +214,10 @@ unsafe fn show_context_menu(hwnd: HWND) {
         0,
         hwnd,
         None,
-    ).unwrap();
+    );
     
     let _ = windows::Win32::UI::WindowsAndMessaging::DestroyMenu(menu);
+    CONTEXT_MENU_OPEN.store(false, Ordering::Relaxed);
 }
 
 fn open_config() {

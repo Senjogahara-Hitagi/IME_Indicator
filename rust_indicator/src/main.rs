@@ -135,6 +135,14 @@ fn run_detector_loop(running: Arc<AtomicBool>) {
     // 主线程负责消息循环，子线程负责检测
     while running.load(Ordering::SeqCst) {
         let now = Instant::now();
+        let tray_menu_open = tray::is_context_menu_open();
+
+        if tray_menu_open && mouse_active {
+            if let Some(ref overlay) = mouse_overlay {
+                overlay.hide();
+            }
+            mouse_active = false;
+        }
 
         // A. 状态检测 (100ms)
         if now.duration_since(last_state_check_time) >= state_interval {
@@ -168,7 +176,8 @@ fn run_detector_loop(running: Arc<AtomicBool>) {
             if config::mouse_enable() {
                 if let Some(ref overlay) = mouse_overlay {
                     let target_cursor = cursor_detector.is_target_cursor();
-                    let should_mouse = target_cursor && (is_chinese || config::mouse_show_en());
+                    let should_mouse =
+                        !tray_menu_open && target_cursor && (is_chinese || config::mouse_show_en());
                     if should_mouse != mouse_active {
                         mouse_active = should_mouse;
                         if mouse_active {

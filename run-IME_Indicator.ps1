@@ -31,7 +31,7 @@ function Get-CargoArgs {
         $args += "--release"
     }
 
-    return ,$args
+    return $args
 }
 
 Get-Process $AppName -ErrorAction SilentlyContinue | Stop-Process -Force
