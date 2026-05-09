@@ -20,6 +20,45 @@ pub fn get_virtual_desktop_rect() -> (i32, i32, i32, i32) {
 }
 
 #[cfg(target_os = "windows")]
+pub fn get_monitor_work_rect_for_point(x: i32, y: i32) -> (i32, i32, i32, i32) {
+    use windows::Win32::Foundation::{POINT, RECT};
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+
+    unsafe {
+        let monitor = MonitorFromPoint(POINT { x, y }, MONITOR_DEFAULTTONEAREST);
+        if monitor.0.is_null() {
+            return get_virtual_desktop_rect();
+        }
+
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            rcMonitor: RECT::default(),
+            rcWork: RECT::default(),
+            dwFlags: 0,
+        };
+
+        if GetMonitorInfoW(monitor, &mut info as *mut _ as *mut _).as_bool() {
+            let rect = info.rcWork;
+            (
+                rect.left,
+                rect.top,
+                (rect.right - rect.left).max(1),
+                (rect.bottom - rect.top).max(1),
+            )
+        } else {
+            get_virtual_desktop_rect()
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn get_monitor_work_rect_for_point(_x: i32, _y: i32) -> (i32, i32, i32, i32) {
+    get_virtual_desktop_rect()
+}
+
+#[cfg(target_os = "windows")]
 pub fn set_process_dpi_awareness() {
     unsafe {
         let shcore = windows::Win32::System::LibraryLoader::LoadLibraryW(windows::core::w!(

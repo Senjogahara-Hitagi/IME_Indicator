@@ -16,7 +16,7 @@ use overlay_shared::windows_support::set_process_dpi_awareness;
 use windows::Win32::Foundation::POINT;
 use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, LoadIconW, IDI_APPLICATION};
 
-use caret_detector::{CaretDetector, DetectionSource};
+use caret_detector::CaretDetector;
 use cursor_detector::CursorDetector;
 use egui_overlay_renderer::{
     CaretVisual, IndicatorOverlayApp, MouseVisual, OverlayVisualState, SharedOverlayVisualState,
@@ -109,9 +109,7 @@ fn run_detector_loop(running: Arc<AtomicBool>, shared_state: SharedOverlayVisual
 
             if config::caret_enable() {
                 let caret_pos = caret_detector.get_caret_pos();
-                let has_real_caret = caret_pos.is_some()
-                    && !matches!(caret_detector.last_source, DetectionSource::CursorFallback);
-                caret_active = has_real_caret && (is_chinese || config::caret_show_en());
+                caret_active = caret_pos.is_some() && (is_chinese || config::caret_show_en());
             } else {
                 caret_active = false;
             }
