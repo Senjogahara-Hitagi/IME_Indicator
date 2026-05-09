@@ -245,7 +245,7 @@ impl IndicatorOverlayApp {
             let screen = mouse_screen.unwrap_or_else(|| painter.clip_rect());
             self.top_left_bubble_pos(
                 screen,
-                Pos2::new(anchor_x + offset_x, anchor_y + offset_y),
+                Pos2::new(anchor_x + offset_x + bubble_width * 0.5, anchor_y + offset_y),
                 Vec2::new(bubble_width, bubble_height),
             )
         } else {
@@ -286,7 +286,9 @@ impl IndicatorOverlayApp {
         let galley = painter.layout_no_wrap(status.input_method.clone(), font, color);
         let padding = Vec2::new(10.0, 6.0);
         let size = Vec2::new(galley.rect.width(), galley.rect.height()) + padding * 2.0;
-        let pos = self.bottom_right_bubble_pos(screen, mouse, size);
+        
+        let mouse_shifted = Pos2::new(mouse.x + size.x * 0.5, mouse.y);
+        let pos = self.bottom_right_bubble_pos(screen, mouse_shifted, size);
 
         let rect = Rect::from_min_size(pos, size);
         painter.rect_filled(rect, CORNER_RADIUS, background_color());
