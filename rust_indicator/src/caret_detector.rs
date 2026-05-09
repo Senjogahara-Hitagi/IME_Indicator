@@ -80,20 +80,42 @@ impl CaretDetector {
 
     /// 核心：多级检测光标位置
     pub fn get_caret_pos(&mut self) -> Option<CaretPos> {
+        // 获取当前焦点窗口信息
+        let mut gui_info = GUITHREADINFO {
+            cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+            ..Default::default()
+        };
+        let gui_info_ok = unsafe { GetGUIThreadInfo(0, &mut gui_info).is_ok() };
+
         // 第一级：原生 Win32 (支持记事本)
-        if let Some(pos) = self.get_pos_via_gui_info() {
-            self.last_source = DetectionSource::GuiInfo;
-            return Some(pos);
+        if gui_info_ok && !gui_info.hwndCaret.0.is_null() {
+            unsafe {
+                let mut pt = POINT {
+                    x: gui_info.rcCaret.left,
+                    y: gui_info.rcCaret.top,
+                };
+                let _ = ClientToScreen(gui_info.hwndCaret, &mut pt);
+                let h = gui_info.rcCaret.bottom - gui_info.rcCaret.top;
+                self.last_source = DetectionSource::GuiInfo;
+                return Some((pt.x, pt.y, h));
+            }
         }
 
+        // 获取用于 UIA 的焦点句柄
+        let focus_hwnd = if gui_info_ok && !gui_info.hwndFocus.0.is_null() {
+            gui_info.hwndFocus
+        } else {
+            unsafe { GetForegroundWindow() }
+        };
+
         // 第二级：UI Automation TextPattern2 GetCaretRange (支持 VS Code)
-        if let Some(pos) = self.get_pos_via_uia_caret_range() {
+        if let Some(pos) = self.get_pos_via_uia_caret_range(focus_hwnd) {
             self.last_source = DetectionSource::UiaCaretRange;
             return Some(pos);
         }
 
         // 第三级：UI Automation TextPattern GetSelection (支持 Chrome)
-        if let Some(pos) = self.get_pos_via_uia_selection() {
+        if let Some(pos) = self.get_pos_via_uia_selection(focus_hwnd) {
             self.last_source = DetectionSource::UiAutomation;
             return Some(pos);
         }
@@ -120,31 +142,8 @@ impl CaretDetector {
         None
     }
 
-    /// 通过 GetGUIThreadInfo 获取光标位置
-    fn get_pos_via_gui_info(&self) -> Option<CaretPos> {
-        unsafe {
-            let mut gui_info = GUITHREADINFO {
-                cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
-                ..Default::default()
-            };
-
-            if GetGUIThreadInfo(0, &mut gui_info).is_ok() {
-                if !gui_info.hwndCaret.0.is_null() {
-                    let mut pt = POINT {
-                        x: gui_info.rcCaret.left,
-                        y: gui_info.rcCaret.top,
-                    };
-                    let _ = ClientToScreen(gui_info.hwndCaret, &mut pt);
-                    let h = gui_info.rcCaret.bottom - gui_info.rcCaret.top;
-                    return Some((pt.x, pt.y, h));
-                }
-            }
-        }
-        None
-    }
-
     /// 通过 UI Automation TextPattern2 GetCaretRange 获取光标位置 (支持 VS Code)
-    fn get_pos_via_uia_caret_range(&mut self) -> Option<CaretPos> {
+    fn get_pos_via_uia_caret_range(&mut self, hwnd: windows::Win32::Foundation::HWND) -> Option<CaretPos> {
         use windows::Win32::UI::Accessibility::TextUnit_Character;
         
         let automation = self.automation.as_ref()?;
@@ -153,12 +152,21 @@ impl CaretDetector {
         self.last_uia_error.clear();
 
         unsafe {
-            // 获取焦点元素
-            let focused = match automation.GetFocusedElement() {
-                Ok(f) => f,
-                Err(e) => {
-                    self.last_uia_error = format!("Car:Focus:{:X}", e.code().0 as u32);
-                    return None;
+            // 优先使用 ElementFromHandle，通常比 GetFocusedElement 快且更稳定
+            let focused = if !hwnd.0.is_null() {
+                automation.ElementFromHandle(hwnd).ok()
+            } else {
+                None
+            };
+
+            let focused = match focused {
+                Some(f) => f,
+                None => match automation.GetFocusedElement() {
+                    Ok(f) => f,
+                    Err(e) => {
+                        self.last_uia_error = format!("Car:Focus:{:X}", e.code().0 as u32);
+                        return None;
+                    }
                 }
             };
 
@@ -257,7 +265,7 @@ impl CaretDetector {
     }
 
     /// 通过 UI Automation TextPattern GetSelection 获取光标位置 (支持 Chrome)
-    fn get_pos_via_uia_selection(&mut self) -> Option<CaretPos> {
+    fn get_pos_via_uia_selection(&mut self, hwnd: windows::Win32::Foundation::HWND) -> Option<CaretPos> {
         let automation = self.automation.as_ref()?;
         
         // 追加错误信息的辅助闭包
@@ -269,12 +277,21 @@ impl CaretDetector {
         };
 
         unsafe {
-            // 获取焦点元素
-            let focused = match automation.GetFocusedElement() {
-                Ok(f) => f,
-                Err(e) => {
-                    append_error(&mut self.last_uia_error, format!("Sel:Focus:{:X}", e.code().0 as u32));
-                    return None;
+            // 优先使用 ElementFromHandle
+            let focused = if !hwnd.0.is_null() {
+                automation.ElementFromHandle(hwnd).ok()
+            } else {
+                None
+            };
+
+            let focused = match focused {
+                Some(f) => f,
+                None => match automation.GetFocusedElement() {
+                    Ok(f) => f,
+                    Err(e) => {
+                        append_error(&mut self.last_uia_error, format!("Sel:Focus:{:X}", e.code().0 as u32));
+                        return None;
+                    }
                 }
             };
 

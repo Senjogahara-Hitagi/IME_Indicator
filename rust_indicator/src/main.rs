@@ -20,6 +20,7 @@ use caret_detector::CaretDetector;
 use cursor_detector::CursorDetector;
 use egui_overlay_renderer::{
     CaretVisual, IndicatorOverlayApp, MouseVisual, OverlayVisualState, SharedOverlayVisualState,
+    query_system_status, SystemStatus,
 };
 use ime_detector::{get_indicator_state, IndicatorState};
 use tray::TrayManager;
@@ -94,21 +95,31 @@ fn run_detector_loop(running: Arc<AtomicBool>, shared_state: SharedOverlayVisual
 
     let mut last_state_check_time = Instant::now();
     let mut state = IndicatorState::EnglishCapsLockOff;
+    let mut system_status = SystemStatus::default();
     let mut caret_active = false;
     let mut mouse_active = false;
 
     while running.load(Ordering::SeqCst) {
         let now = Instant::now();
 
+        // 核心检测：每 10ms 获取一次光标位置 (如果启用了 caret)
+        let caret_pos = if config::caret_enable() {
+            caret_detector.get_caret_pos()
+        } else {
+            None
+        };
+
+        // 状态更新：每 100ms 更新一次 IME 状态和 active 标志
         if now.duration_since(last_state_check_time) >= state_interval {
             state = get_indicator_state();
+            system_status = query_system_status();
             let is_chinese = matches!(
                 state,
                 IndicatorState::ChineseCapsLockOn | IndicatorState::ChineseCapsLockOff
             );
 
             if config::caret_enable() {
-                let caret_pos = caret_detector.get_caret_pos();
+                // 如果当前能拿到光标位置，或者处于中文模式，则激活 caret
                 caret_active = caret_pos.is_some() && (is_chinese || config::caret_show_en());
             } else {
                 caret_active = false;
@@ -124,10 +135,9 @@ fn run_detector_loop(running: Arc<AtomicBool>, shared_state: SharedOverlayVisual
             last_state_check_time = now;
         }
 
-        let caret = if config::caret_enable() && caret_active {
-            caret_detector
-                .get_caret_pos()
-                .map(|(x, y, height)| CaretVisual { x, y, height })
+        // 组合最终视觉状态
+        let caret = if caret_active {
+            caret_pos.map(|(x, y, height)| CaretVisual { x, y, height })
         } else {
             None
         };
@@ -150,6 +160,7 @@ fn run_detector_loop(running: Arc<AtomicBool>, shared_state: SharedOverlayVisual
             visual.indicator_state = state;
             visual.caret = caret;
             visual.mouse = mouse;
+            visual.system_status = system_status.clone();
         }
 
         thread::sleep(track_interval);

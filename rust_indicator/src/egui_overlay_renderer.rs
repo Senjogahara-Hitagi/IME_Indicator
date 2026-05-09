@@ -43,11 +43,12 @@ pub struct CaretVisual {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MouseVisual;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct OverlayVisualState {
     pub indicator_state: IndicatorState,
     pub caret: Option<CaretVisual>,
     pub mouse: Option<MouseVisual>,
+    pub system_status: SystemStatus,
 }
 
 impl Default for OverlayVisualState {
@@ -56,9 +57,11 @@ impl Default for OverlayVisualState {
             indicator_state: IndicatorState::EnglishCapsLockOff,
             caret: None,
             mouse: None,
+            system_status: SystemStatus::default(),
         }
     }
 }
+
 
 pub type SharedOverlayVisualState = Arc<Mutex<OverlayVisualState>>;
 
@@ -78,14 +81,12 @@ pub struct IndicatorOverlayApp {
     caret_offset_y: f32,
     mouse_offset_x: f32,
     mouse_offset_y: f32,
-    system_status: SystemStatus,
-    last_status_poll: Instant,
 }
 
 #[derive(Clone, Debug)]
-struct SystemStatus {
-    cursor_visible: bool,
-    input_method: String,
+pub struct SystemStatus {
+    pub cursor_visible: bool,
+    pub input_method: String,
 }
 
 impl Default for SystemStatus {
@@ -127,8 +128,6 @@ impl IndicatorOverlayApp {
             caret_offset_y: caret_offset_y as f32,
             mouse_offset_x: mouse_offset_x as f32,
             mouse_offset_y: mouse_offset_y as f32,
-            system_status: SystemStatus::default(),
-            last_status_poll: Instant::now() - Duration::from_secs(1),
         }
     }
 
@@ -277,22 +276,14 @@ impl IndicatorOverlayApp {
         )
     }
 
-    fn poll_status(&mut self) {
-        let now = Instant::now();
-        if now.duration_since(self.last_status_poll) >= Duration::from_millis(50) {
-            self.system_status = query_system_status();
-            self.last_status_poll = now;
-        }
-    }
-
-    fn draw_mouse_status(&self, painter: &egui::Painter, mouse: Pos2, screen: Rect) {
-        if !self.system_status.cursor_visible {
+    fn draw_mouse_status(&self, painter: &egui::Painter, mouse: Pos2, screen: Rect, status: &SystemStatus) {
+        if !status.cursor_visible {
             return;
         }
 
         let font = FontId::proportional(14.0);
         let color = Color32::from_rgb(130, 214, 255);
-        let galley = painter.layout_no_wrap(self.system_status.input_method.clone(), font, color);
+        let galley = painter.layout_no_wrap(status.input_method.clone(), font, color);
         let padding = Vec2::new(10.0, 6.0);
         let size = Vec2::new(galley.rect.width(), galley.rect.height()) + padding * 2.0;
         let pos = self.bottom_right_bubble_pos(screen, mouse, size);
@@ -323,14 +314,12 @@ impl egui_overlay::EguiOverlay for IndicatorOverlayApp {
             self.window_positioned = true;
         }
 
-        self.poll_status();
-
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Foreground,
             egui::Id::new("ime_indicator_overlay"),
         ));
 
-        let snapshot = *self.shared_state.lock().expect("overlay state poisoned");
+        let snapshot = self.shared_state.lock().expect("overlay state poisoned").clone();
 
         if let Some(caret) = snapshot.caret {
             let caret_pos = self.screen_px_to_overlay_point(
@@ -371,7 +360,7 @@ impl egui_overlay::EguiOverlay for IndicatorOverlayApp {
                 true,
                 Some(mouse_screen),
             );
-            self.draw_mouse_status(&painter, mouse_pos, mouse_screen);
+            self.draw_mouse_status(&painter, mouse_pos, mouse_screen, &snapshot.system_status);
         }
 
         glfw_backend.set_passthrough(true);
@@ -383,12 +372,17 @@ impl egui_overlay::EguiOverlay for IndicatorOverlayApp {
 }
 
 #[cfg(target_os = "windows")]
-fn query_system_status() -> SystemStatus {
+pub fn query_system_status() -> SystemStatus {
+    use std::sync::Mutex;
     use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyboardLayout;
     use windows::Win32::UI::WindowsAndMessaging::{
         CURSOR_SHOWING, CURSORINFO, GetCursorInfo, GetForegroundWindow, GetWindowThreadProcessId,
     };
 
+    // 缓存上一次的检测结果，减少性能消耗
+    // HWND 本身不支持 Send，转为 isize 存储
+    static CACHE: Mutex<Option<(isize, String, Instant)>> = Mutex::new(None);
+    
     unsafe {
         let mut cursor_info = CURSORINFO {
             cbSize: std::mem::size_of::<CURSORINFO>() as u32,
@@ -398,6 +392,20 @@ fn query_system_status() -> SystemStatus {
             GetCursorInfo(&mut cursor_info).is_ok() && cursor_info.flags == CURSOR_SHOWING;
 
         let foreground = GetForegroundWindow();
+        
+        // 检查缓存
+        if let Ok(cache) = CACHE.lock() {
+            if let Some((last_hwnd_raw, last_label, last_time)) = cache.as_ref() {
+                // 如果窗口没变，且距离上次检测不到 500ms，直接返回缓存
+                if *last_hwnd_raw == foreground.0 as isize && last_time.elapsed() < Duration::from_millis(500) {
+                    return SystemStatus {
+                        cursor_visible,
+                        input_method: last_label.clone(),
+                    };
+                }
+            }
+        }
+
         let thread_id = GetWindowThreadProcessId(foreground, None);
         let layout = GetKeyboardLayout(thread_id);
         let tsf_status = query_tsf_status(foreground);
@@ -408,9 +416,16 @@ fn query_system_status() -> SystemStatus {
                 .and_then(|status| status.input_method.as_deref()),
         );
 
+        let label = input_info.label;
+        
+        // 更新缓存
+        if let Ok(mut cache) = CACHE.lock() {
+            *cache = Some((foreground.0 as isize, label.clone(), Instant::now()));
+        }
+
         SystemStatus {
             cursor_visible,
-            input_method: input_info.label,
+            input_method: label,
         }
     }
 }

@@ -52,7 +52,7 @@ fn send_message_timeout(hwnd: HWND, msg: u32, wparam: usize, lparam: isize) -> O
             windows::Win32::Foundation::WPARAM(wparam),
             windows::Win32::Foundation::LPARAM(lparam),
             SMTO_ABORTIFHUNG,
-            500,
+            100,
             Some(&mut result),
         );
 
