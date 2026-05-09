@@ -1,6 +1,6 @@
 [package]
-name = "IME_indicator"
-version = "0.2.1"
+name = "overlay_shared"
+version = "0.1.0"
 edition = "2021"
 
 [dependencies]
@@ -9,7 +9,3 @@ egui_overlay.workspace = true
 egui_render_three_d.workspace = true
 egui_window_glfw_passthrough.workspace = true
 windows.workspace = true
-overlay_shared = { path = "../overlay_shared" }
-
-[build-dependencies]
-embed-resource.workspace = true

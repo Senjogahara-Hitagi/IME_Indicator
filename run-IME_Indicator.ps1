@@ -14,14 +14,14 @@ if ($Release -and $Debug) {
 
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $RustDir = Join-Path $ProjectRoot "rust_indicator"
-$AppName = "IME-Indicator"
+$AppName = "IME_indicator"
 $DefaultProfile = "release"
 $ProfileDir = if ($Debug) { "debug" } elseif ($Release) { "release" } else { $DefaultProfile }
-$ExePath = Join-Path $RustDir "target\$ProfileDir\$AppName.exe"
+$ExePath = Join-Path $ProjectRoot "target\$ProfileDir\$AppName.exe"
 $RepoConfigPath = Join-Path $RustDir "config.toml"
-$RuntimeConfigPath = Join-Path $RustDir "target\$ProfileDir\config.toml"
+$RuntimeConfigPath = Join-Path $ProjectRoot "target\$ProfileDir\config.toml"
 
-Set-Location $RustDir
+Set-Location $ProjectRoot
 
 function Get-CargoArgs {
     param(
@@ -50,7 +50,7 @@ if (Test-Path $RepoConfigPath) {
 }
 
 if ($Console) {
-    & cargo @(Get-CargoArgs -Command "run")
+    & cargo @(Get-CargoArgs -Command "run") "-p" "IME_indicator"
 } else {
     Start-Process -FilePath $ExePath -WorkingDirectory $RustDir -WindowStyle Hidden
 }

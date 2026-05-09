@@ -1,15 +1,16 @@
 [package]
-name = "IME_indicator"
-version = "0.2.1"
-edition = "2021"
+name = "overlay_status_bar"
+version = "0.1.0"
+edition = "2024"
 
 [dependencies]
 egui.workspace = true
 egui_overlay.workspace = true
 egui_render_three_d.workspace = true
 egui_window_glfw_passthrough.workspace = true
-windows.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 overlay_shared = { path = "../overlay_shared" }
 
-[build-dependencies]
-embed-resource.workspace = true
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true

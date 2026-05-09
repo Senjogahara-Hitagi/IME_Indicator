@@ -1,4 +1,3 @@
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use egui::{Color32, FontId, Pos2, Rect, Vec2};
@@ -6,80 +5,7 @@ use egui_render_three_d::ThreeDBackend as DefaultGfxBackend;
 use overlay_shared::egui_support::load_system_fonts;
 use overlay_shared::windows_support::get_virtual_desktop_rect;
 
-use crate::ime_detector::IndicatorState;
-
-const WINDOW_TITLE: &str = "IME-Indicator-egui";
-const PADDING_X: f32 = 6.0;
-const PADDING_Y: f32 = 2.0;
-const CORNER_RADIUS: f32 = 8.0;
-const MIN_BUBBLE_WIDTH: f32 = 24.0;
-const MIN_BUBBLE_HEIGHT: f32 = 18.0;
-const CARET_MIN_ANCHOR_HEIGHT: f32 = 20.0;
-const CARET_GAP_Y: f32 = 2.0;
-const MOUSE_GAP_X: f32 = 18.0;
-const MOUSE_GAP_Y: f32 = 14.0;
-
-fn background_color() -> Color32 {
-    Color32::from_rgba_unmultiplied(12, 18, 22, 170)
-}
-
-fn color32_from_argb(argb: u32) -> Color32 {
-    Color32::from_rgba_unmultiplied(
-        ((argb >> 16) & 0xff) as u8,
-        ((argb >> 8) & 0xff) as u8,
-        (argb & 0xff) as u8,
-        ((argb >> 24) & 0xff) as u8,
-    )
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct CaretVisual {
-    pub x: i32,
-    pub y: i32,
-    pub height: i32,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct MouseVisual;
-
-#[derive(Clone, Copy, Debug)]
-pub struct OverlayVisualState {
-    pub indicator_state: IndicatorState,
-    pub caret: Option<CaretVisual>,
-    pub mouse: Option<MouseVisual>,
-}
-
-impl Default for OverlayVisualState {
-    fn default() -> Self {
-        Self {
-            indicator_state: IndicatorState::EnglishCapsLockOff,
-            caret: None,
-            mouse: None,
-        }
-    }
-}
-
-pub type SharedOverlayVisualState = Arc<Mutex<OverlayVisualState>>;
-
-pub struct IndicatorOverlayApp {
-    fonts_loaded: bool,
-    window_positioned: bool,
-    virtual_origin_x: f32,
-    virtual_origin_y: f32,
-    shared_state: SharedOverlayVisualState,
-    caret_font_px: f32,
-    mouse_font_px: f32,
-    caret_color_cn: Color32,
-    caret_color_en: Color32,
-    mouse_color_cn: Color32,
-    mouse_color_en: Color32,
-    caret_offset_x: f32,
-    caret_offset_y: f32,
-    mouse_offset_x: f32,
-    mouse_offset_y: f32,
-    system_status: SystemStatus,
-    last_status_poll: Instant,
-}
+const WINDOW_TITLE: &str = "overlay-status_bar";
 
 #[derive(Clone, Debug)]
 struct SystemStatus {
@@ -96,36 +22,18 @@ impl Default for SystemStatus {
     }
 }
 
-impl IndicatorOverlayApp {
-    pub fn new(
-        shared_state: SharedOverlayVisualState,
-        caret_font_px: f32,
-        mouse_font_px: f32,
-        caret_color_cn: u32,
-        caret_color_en: u32,
-        mouse_color_cn: u32,
-        mouse_color_en: u32,
-        caret_offset_x: i32,
-        caret_offset_y: i32,
-        mouse_offset_x: i32,
-        mouse_offset_y: i32,
-    ) -> Self {
+pub struct StatusOverlayApp {
+    fonts_loaded: bool,
+    window_positioned: bool,
+    system_status: SystemStatus,
+    last_status_poll: Instant,
+}
+
+impl StatusOverlayApp {
+    pub fn new() -> Self {
         Self {
             fonts_loaded: false,
             window_positioned: false,
-            virtual_origin_x: 0.0,
-            virtual_origin_y: 0.0,
-            shared_state,
-            caret_font_px,
-            mouse_font_px,
-            caret_color_cn: color32_from_argb(caret_color_cn),
-            caret_color_en: color32_from_argb(caret_color_en),
-            mouse_color_cn: color32_from_argb(mouse_color_cn),
-            mouse_color_en: color32_from_argb(mouse_color_en),
-            caret_offset_x: caret_offset_x as f32,
-            caret_offset_y: caret_offset_y as f32,
-            mouse_offset_x: mouse_offset_x as f32,
-            mouse_offset_y: mouse_offset_y as f32,
             system_status: SystemStatus::default(),
             last_status_poll: Instant::now() - Duration::from_secs(1),
         }
@@ -139,81 +47,7 @@ impl IndicatorOverlayApp {
         self.fonts_loaded = true;
     }
 
-    fn draw_indicator(
-        &self,
-        painter: &egui::Painter,
-        anchor_x: f32,
-        anchor_y: f32,
-        anchor_height: f32,
-        font_px: f32,
-        offset_x: f32,
-        offset_y: f32,
-        state: IndicatorState,
-        mouse_mode: bool,
-    ) {
-        let color = if mouse_mode {
-            if state.is_chinese() {
-                self.mouse_color_cn
-            } else {
-                self.mouse_color_en
-            }
-        } else if state.is_chinese() {
-            self.caret_color_cn
-        } else {
-            self.caret_color_en
-        };
-        let text = state.get_text();
-        let font = FontId::proportional(font_px);
-        let galley = painter.layout_no_wrap(text.to_string(), font, color);
-        let bubble_width = (galley.rect.width() + PADDING_X * 2.0).max(MIN_BUBBLE_WIDTH);
-        let bubble_height = (galley.rect.height() + PADDING_Y * 2.0).max(MIN_BUBBLE_HEIGHT);
-
-        let pos = if mouse_mode {
-            let screen = painter.clip_rect();
-            let mut pos = Pos2::new(
-                anchor_x + offset_x - bubble_width - MOUSE_GAP_X,
-                anchor_y + offset_y - bubble_height - MOUSE_GAP_Y,
-            );
-
-            if pos.x < screen.left() + 6.0 {
-                pos.x = anchor_x + offset_x + MOUSE_GAP_X;
-            }
-            if pos.y < screen.top() + 6.0 {
-                pos.y = anchor_y + offset_y + MOUSE_GAP_Y;
-            }
-
-            pos.x = pos.x.clamp(screen.left() + 6.0, screen.right() - bubble_width - 6.0);
-            pos.y = pos.y.clamp(screen.top() + 6.0, screen.bottom() - bubble_height - 6.0);
-            pos
-        } else {
-            Pos2::new(
-                anchor_x + offset_x - bubble_width * 0.5,
-                anchor_y + anchor_height.max(CARET_MIN_ANCHOR_HEIGHT) + offset_y + CARET_GAP_Y,
-            )
-        };
-
-        let rect = Rect::from_min_size(pos, Vec2::new(bubble_width, bubble_height));
-        painter.rect_filled(rect, CORNER_RADIUS, background_color());
-        let text_pos = Pos2::new(
-            rect.center().x - galley.rect.width() * 0.5,
-            rect.center().y - galley.rect.height() * 0.5,
-        );
-        painter.galley(text_pos, galley, color);
-    }
-
-    fn screen_px_to_overlay_point(
-        &self,
-        screen_x: f32,
-        screen_y: f32,
-        pixels_per_point: f32,
-    ) -> Pos2 {
-        Pos2::new(
-            (screen_x - self.virtual_origin_x) / pixels_per_point,
-            (screen_y - self.virtual_origin_y) / pixels_per_point,
-        )
-    }
-
-    fn poll_status(&mut self) {
+    fn poll_state(&mut self) {
         let now = Instant::now();
         if now.duration_since(self.last_status_poll) >= Duration::from_millis(50) {
             self.system_status = query_system_status();
@@ -221,18 +55,25 @@ impl IndicatorOverlayApp {
         }
     }
 
-    fn draw_mouse_status(&self, painter: &egui::Painter, mouse: Pos2) {
+    fn draw_status(&self, ctx: &egui::Context, mouse: Pos2) {
         if !self.system_status.cursor_visible {
             return;
         }
 
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("status_overlay"),
+        ));
         let font = FontId::proportional(14.0);
-        let color = Color32::from_rgb(130, 214, 255);
-        let galley = painter.layout_no_wrap(self.system_status.input_method.clone(), font, color);
+        let galley = painter.layout_no_wrap(
+            self.system_status.input_method.clone(),
+            font,
+            Color32::from_rgb(130, 214, 255),
+        );
         let padding = Vec2::new(10.0, 6.0);
         let size = Vec2::new(galley.rect.width(), galley.rect.height()) + padding * 2.0;
-        let screen = painter.clip_rect();
         let mut pos = mouse + Vec2::new(30.0, 18.0);
+        let screen = ctx.screen_rect();
 
         if pos.x + size.x > screen.right() - 6.0 {
             pos.x = mouse.x - size.x - 30.0;
@@ -244,12 +85,12 @@ impl IndicatorOverlayApp {
         pos.y = pos.y.max(screen.top() + 6.0);
 
         let rect = Rect::from_min_size(pos, size);
-        painter.rect_filled(rect, CORNER_RADIUS, background_color());
-        painter.galley(pos + padding, galley, color);
+        painter.rect_filled(rect, 8.0, Color32::from_rgba_unmultiplied(12, 18, 22, 170));
+        painter.galley(pos + padding, galley, Color32::from_rgb(130, 214, 255));
     }
 }
 
-impl egui_overlay::EguiOverlay for IndicatorOverlayApp {
+impl egui_overlay::EguiOverlay for StatusOverlayApp {
     fn gui_run(
         &mut self,
         ctx: &egui::Context,
@@ -257,61 +98,19 @@ impl egui_overlay::EguiOverlay for IndicatorOverlayApp {
         glfw_backend: &mut egui_window_glfw_passthrough::GlfwBackend,
     ) {
         self.load_fonts(ctx);
-        let pixels_per_point = ctx.pixels_per_point().max(1.0);
 
         if !self.window_positioned {
             let (x, y, w, h) = get_virtual_desktop_rect();
             glfw_backend.set_title(WINDOW_TITLE.to_string());
             glfw_backend.window.set_pos(x, y);
             glfw_backend.window.set_size(w, h);
-            self.virtual_origin_x = x as f32;
-            self.virtual_origin_y = y as f32;
             self.window_positioned = true;
         }
 
-        self.poll_status();
+        self.poll_state();
 
-        let painter = ctx.layer_painter(egui::LayerId::new(
-            egui::Order::Foreground,
-            egui::Id::new("ime_indicator_overlay"),
-        ));
-
-        let snapshot = *self.shared_state.lock().expect("overlay state poisoned");
-
-        if let Some(caret) = snapshot.caret {
-            let caret_pos = self.screen_px_to_overlay_point(
-                caret.x as f32,
-                caret.y as f32,
-                pixels_per_point,
-            );
-            self.draw_indicator(
-                &painter,
-                caret_pos.x,
-                caret_pos.y,
-                caret.height as f32 / pixels_per_point,
-                self.caret_font_px,
-                self.caret_offset_x / pixels_per_point,
-                self.caret_offset_y / pixels_per_point,
-                snapshot.indicator_state,
-                false,
-            );
-        }
-
-        if snapshot.mouse.is_some() {
-            let mouse_pos = Pos2::new(glfw_backend.cursor_pos[0], glfw_backend.cursor_pos[1]);
-            self.draw_indicator(
-                &painter,
-                mouse_pos.x,
-                mouse_pos.y,
-                0.0,
-                self.mouse_font_px,
-                self.mouse_offset_x / pixels_per_point,
-                self.mouse_offset_y / pixels_per_point,
-                snapshot.indicator_state,
-                true,
-            );
-            self.draw_mouse_status(&painter, mouse_pos);
-        }
+        let mouse = Pos2::new(glfw_backend.cursor_pos[0], glfw_backend.cursor_pos[1]);
+        self.draw_status(ctx, mouse);
 
         glfw_backend.set_passthrough(true);
         glfw_backend.window.set_decorated(false);

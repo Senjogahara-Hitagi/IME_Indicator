@@ -11,6 +11,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+use overlay_shared::egui_overlay_runner::start_overlay;
+use overlay_shared::windows_support::set_process_dpi_awareness;
 use windows::Win32::Foundation::POINT;
 use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, LoadIconW, IDI_APPLICATION};
 
@@ -23,7 +25,7 @@ use ime_detector::{get_indicator_state, IndicatorState};
 use tray::TrayManager;
 
 fn main() {
-    set_dpi_awareness();
+    set_process_dpi_awareness();
 
     let running = Arc::new(AtomicBool::new(true));
     let shared_state: SharedOverlayVisualState =
@@ -35,8 +37,28 @@ fn main() {
         thread::spawn(move || run_detector_loop(detector_running, detector_state));
     }
 
+    {
+        let overlay_state = shared_state.clone();
+        thread::spawn(move || {
+            let app = IndicatorOverlayApp::new(
+                overlay_state,
+                config::caret_size() as f32,
+                config::mouse_size() as f32,
+                config::caret_color_cn(),
+                config::caret_color_en(),
+                config::mouse_color_cn(),
+                config::mouse_color_en(),
+                config::caret_offset_x(),
+                config::caret_offset_y(),
+                config::mouse_offset_x(),
+                config::mouse_offset_y(),
+            );
+            start_overlay(app);
+        });
+    }
+
     if config::tray_enable() {
-        thread::spawn(move || unsafe {
+        unsafe {
             let h_instance = windows::Win32::System::LibraryLoader::GetModuleHandleW(None).unwrap();
             let mut icon = LoadIconW(h_instance, windows::core::PCWSTR(1 as _))
                 .unwrap_or_else(|_| LoadIconW(None, IDI_APPLICATION).unwrap());
@@ -53,23 +75,12 @@ fn main() {
             let tray = TrayManager::new(icon);
             tray.run_message_loop();
             tray.destroy();
-        });
+        }
+    } else {
+        while running.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(100));
+        }
     }
-
-    let app = IndicatorOverlayApp::new(
-        shared_state,
-        config::caret_size() as f32,
-        config::mouse_size() as f32,
-        config::caret_color_cn(),
-        config::caret_color_en(),
-        config::mouse_color_cn(),
-        config::mouse_color_en(),
-        config::caret_offset_x(),
-        config::caret_offset_y(),
-        config::mouse_offset_x(),
-        config::mouse_offset_y(),
-    );
-    egui_overlay::start(app);
 
     running.store(false, Ordering::SeqCst);
 }
@@ -127,7 +138,7 @@ fn run_detector_loop(running: Arc<AtomicBool>, shared_state: SharedOverlayVisual
             let mut pt = POINT::default();
             unsafe {
                 if GetCursorPos(&mut pt).is_ok() {
-                    Some(MouseVisual { x: pt.x, y: pt.y })
+                    Some(MouseVisual)
                 } else {
                     None
                 }
@@ -144,36 +155,5 @@ fn run_detector_loop(running: Arc<AtomicBool>, shared_state: SharedOverlayVisual
         }
 
         thread::sleep(track_interval);
-    }
-}
-
-fn set_dpi_awareness() {
-    unsafe {
-        let shcore = windows::Win32::System::LibraryLoader::LoadLibraryW(windows::core::w!(
-            "shcore.dll"
-        ));
-        if let Ok(h) = shcore {
-            if let Some(func) = windows::Win32::System::LibraryLoader::GetProcAddress(
-                h,
-                windows::core::s!("SetProcessDpiAwareness"),
-            ) {
-                let set_dpi: extern "system" fn(i32) -> i32 = std::mem::transmute(func);
-                let _ = set_dpi(2);
-                return;
-            }
-        }
-
-        let user32 = windows::Win32::System::LibraryLoader::LoadLibraryW(windows::core::w!(
-            "user32.dll"
-        ));
-        if let Ok(h) = user32 {
-            if let Some(func) = windows::Win32::System::LibraryLoader::GetProcAddress(
-                h,
-                windows::core::s!("SetProcessDPIAware"),
-            ) {
-                let set_dpi: extern "system" fn() -> i32 = std::mem::transmute(func);
-                let _ = set_dpi();
-            }
-        }
     }
 }

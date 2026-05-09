@@ -1,0 +1,6 @@
+Add these window titles to your local komorebi ignore / float blacklist:
+
+- IME-Indicator-egui
+- overlay-status_bar
+
+Both windows are overlay-only surfaces and are also forced to `WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_TOPMOST` in code now.

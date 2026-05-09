@@ -1,4 +1,5 @@
 # Rust
+/target/
 rust_indicator/target/
 
 # Python
