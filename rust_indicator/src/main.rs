@@ -17,7 +17,7 @@ use overlay_shared::windows_support::set_process_dpi_awareness;
 use windows::Win32::Foundation::POINT;
 use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, LoadIconW, IDI_APPLICATION};
 
-use caret_detector::CaretDetector;
+use caret_detector::{CaretDetector, DetectionSource};
 use cursor_detector::CursorDetector;
 use egui_overlay_renderer::{
     CaretVisual, IndicatorOverlayApp, MouseVisual, OverlayVisualState, SharedOverlayVisualState,
@@ -143,7 +143,12 @@ fn run_detector_loop(running: Arc<AtomicBool>, shared_state: SharedOverlayVisual
 
         // 组合最终视觉状态
         let caret = if caret_active {
-            caret_pos.map(|(x, y, height)| CaretVisual { x, y, height })
+            // 如果光标检测失败回退到了鼠标位置，且此时鼠标提示本身就是开启的，则隐藏光标提示避免重复
+            if mouse_active && matches!(caret_detector.last_source, DetectionSource::CursorFallback) {
+                None
+            } else {
+                caret_pos.map(|(x, y, height)| CaretVisual { x, y, height })
+            }
         } else {
             None
         };
