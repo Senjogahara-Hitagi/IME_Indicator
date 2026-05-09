@@ -7,9 +7,32 @@ use overlay_shared::egui_overlay_runner::start_overlay;
 use overlay_shared::windows_support::{get_virtual_desktop_rect, set_process_dpi_awareness};
 
 const WINDOW_TITLE: &str = "overlay-status_bar";
+
+use std::sync::{Arc, Mutex};
+
+pub type SharedSystemStatus = Arc<Mutex<SystemStatus>>;
+
 fn main() {
     set_process_dpi_awareness();
-    start_overlay(StatusOverlayApp::new());
+    
+    let shared_status = Arc::new(Mutex::new(SystemStatus::default()));
+    
+    {
+        let status = shared_status.clone();
+        std::thread::spawn(move || {
+            loop {
+                let new_status = query_system_status();
+                {
+                    if let Ok(mut s) = status.lock() {
+                        *s = new_status;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+    }
+
+    start_overlay(StatusOverlayApp::new(shared_status));
 }
 
 #[derive(Clone, Debug)]
@@ -30,17 +53,15 @@ impl Default for SystemStatus {
 struct StatusOverlayApp {
     fonts_loaded: bool,
     window_positioned: bool,
-    system_status: SystemStatus,
-    last_status_poll: Instant,
+    shared_status: SharedSystemStatus,
 }
 
 impl StatusOverlayApp {
-    fn new() -> Self {
+    fn new(shared_status: SharedSystemStatus) -> Self {
         Self {
             fonts_loaded: false,
             window_positioned: false,
-            system_status: SystemStatus::default(),
-            last_status_poll: Instant::now() - Duration::from_secs(1),
+            shared_status,
         }
     }
 
@@ -52,16 +73,14 @@ impl StatusOverlayApp {
         self.fonts_loaded = true;
     }
 
-    fn poll_state(&mut self) {
-        let now = Instant::now();
-        if now.duration_since(self.last_status_poll) >= Duration::from_millis(50) {
-            self.system_status = query_system_status();
-            self.last_status_poll = now;
-        }
-    }
-
     fn draw_status(&self, ctx: &egui::Context, mouse: Pos2) {
-        if !self.system_status.cursor_visible {
+        let status = if let Ok(s) = self.shared_status.lock() {
+            s.clone()
+        } else {
+            SystemStatus::default()
+        };
+
+        if !status.cursor_visible {
             return;
         }
 
@@ -71,7 +90,7 @@ impl StatusOverlayApp {
         ));
         let font = FontId::proportional(14.0);
         let galley = painter.layout_no_wrap(
-            self.system_status.input_method.clone(),
+            status.input_method.clone(),
             font,
             Color32::from_rgb(130, 214, 255),
         );
@@ -111,8 +130,6 @@ impl egui_overlay::EguiOverlay for StatusOverlayApp {
             glfw_backend.window.set_size(w, h);
             self.window_positioned = true;
         }
-
-        self.poll_state();
 
         let mouse = Pos2::new(glfw_backend.cursor_pos[0], glfw_backend.cursor_pos[1]);
         self.draw_status(ctx, mouse);
@@ -175,7 +192,6 @@ struct InputMethodInfo {
 
 #[cfg(target_os = "windows")]
 fn query_tsf_status(foreground: windows::Win32::Foundation::HWND) -> Option<TsfStatus> {
-    use std::sync::Once;
     use windows::Win32::System::Com::{
         CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
     };
@@ -186,77 +202,57 @@ fn query_tsf_status(foreground: windows::Win32::Foundation::HWND) -> Option<TsfS
     use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
     use windows::core::IUnknown;
 
-    static COM_INIT: Once = Once::new();
-
     unsafe {
-        COM_INIT.call_once(|| {
-            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        });
+        // 每个线程都需要初始化 COM。如果已经初始化，CoInitializeEx 会返回 S_FALSE (被 ok() 接受)
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
 
-        let foreground_thread = GetWindowThreadProcessId(foreground, None);
-        let input_method = with_foreground_thread_input_attached(foreground_thread, || {
-            let profiles: ITfInputProcessorProfiles = CoCreateInstance(
-                &CLSID_TF_InputProcessorProfiles,
-                None::<&IUnknown>,
-                CLSCTX_INPROC_SERVER,
-            )
-            .ok()?;
-            let profile_mgr: ITfInputProcessorProfileMgr = CoCreateInstance(
-                &CLSID_TF_InputProcessorProfiles,
-                None::<&IUnknown>,
-                CLSCTX_INPROC_SERVER,
-            )
-            .ok()?;
+        // 获取前台窗口所在的线程 ID。虽然我们现在不 Attach，但保留逻辑以防未来需要其他线程相关操作
+        let _foreground_thread = GetWindowThreadProcessId(foreground, None);
+        
+        // 尝试获取活跃配置文件。
+        // 注意：不使用 AttachThreadInput。虽然在某些情况下这可能导致无法获取非当前线程的 TSF 详情，
+        // 但它能彻底避免在窗口切换（如使用 komorebi 时）导致的系统级死锁和“漏斗”光标。
+        let profiles: ITfInputProcessorProfiles = CoCreateInstance(
+            &CLSID_TF_InputProcessorProfiles,
+            None::<&IUnknown>,
+            CLSCTX_INPROC_SERVER,
+        )
+        .ok()?;
+        let profile_mgr: ITfInputProcessorProfileMgr = CoCreateInstance(
+            &CLSID_TF_InputProcessorProfiles,
+            None::<&IUnknown>,
+            CLSCTX_INPROC_SERVER,
+        )
+        .ok()?;
 
-            let mut profile = TF_INPUTPROCESSORPROFILE::default();
-            let input_method = profile_mgr
-                .GetActiveProfile(&GUID_TFCAT_TIP_KEYBOARD, &mut profile)
-                .ok()
-                .and_then(|_| {
-                    if profile.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR {
-                        let description = profiles
-                            .GetLanguageProfileDescription(
-                                &profile.clsid,
-                                profile.langid,
-                                &profile.guidProfile,
-                            )
-                            .ok()
-                            .map(|value| value.to_string());
-                        let mapped = map_tsf_profile_label(
-                            &format!("{:?}", profile.clsid),
-                            &format!("{:?}", profile.guidProfile),
-                            description.as_deref(),
-                        );
-                        Some(mapped.unwrap_or_else(|| {
-                            compact_input_method_label(description.as_deref().unwrap_or("?"))
-                        }))
-                    } else {
-                        Some(layout_label_from_hkl(profile.hkl))
-                    }
-                });
-
-            Some(input_method)
-        })
-        .unwrap_or(None);
+        let mut profile = TF_INPUTPROCESSORPROFILE::default();
+        let input_method = profile_mgr
+            .GetActiveProfile(&GUID_TFCAT_TIP_KEYBOARD, &mut profile)
+            .ok()
+            .and_then(|_| {
+                if profile.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR {
+                    let description = profiles
+                        .GetLanguageProfileDescription(
+                            &profile.clsid,
+                            profile.langid,
+                            &profile.guidProfile,
+                        )
+                        .ok()
+                        .map(|value| value.to_string());
+                    let mapped = map_tsf_profile_label(
+                        &format!("{:?}", profile.clsid),
+                        &format!("{:?}", profile.guidProfile),
+                        description.as_deref(),
+                    );
+                    Some(mapped.unwrap_or_else(|| {
+                        compact_input_method_label(description.as_deref().unwrap_or("?"))
+                    }))
+                } else {
+                    Some(layout_label_from_hkl(profile.hkl))
+                }
+            });
 
         Some(TsfStatus { input_method })
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn with_foreground_thread_input_attached<T>(foreground_thread: u32, f: impl FnOnce() -> T) -> T {
-    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
-
-    unsafe {
-        let current_thread = GetCurrentThreadId();
-        let attached = foreground_thread != 0
-            && foreground_thread != current_thread
-            && AttachThreadInput(current_thread, foreground_thread, true).as_bool();
-        let result = f();
-        if attached {
-            let _ = AttachThreadInput(current_thread, foreground_thread, false);
-        }
-        result
     }
 }
 

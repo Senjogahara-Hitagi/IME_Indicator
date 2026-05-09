@@ -170,7 +170,6 @@ struct InputMethodInfo {
 
 #[cfg(target_os = "windows")]
 fn query_tsf_status(foreground: windows::Win32::Foundation::HWND) -> Option<TsfStatus> {
-    use std::sync::Once;
     use windows::Win32::System::Com::{
         CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
     };
@@ -181,77 +180,57 @@ fn query_tsf_status(foreground: windows::Win32::Foundation::HWND) -> Option<TsfS
     use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
     use windows::core::IUnknown;
 
-    static COM_INIT: Once = Once::new();
-
     unsafe {
-        COM_INIT.call_once(|| {
-            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        });
+        // 每个线程都需要初始化 COM。如果已经初始化，CoInitializeEx 会返回 S_FALSE (被 ok() 接受)
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
 
-        let foreground_thread = GetWindowThreadProcessId(foreground, None);
-        let input_method = with_foreground_thread_input_attached(foreground_thread, || {
-            let profiles: ITfInputProcessorProfiles = CoCreateInstance(
-                &CLSID_TF_InputProcessorProfiles,
-                None::<&IUnknown>,
-                CLSCTX_INPROC_SERVER,
-            )
-            .ok()?;
-            let profile_mgr: ITfInputProcessorProfileMgr = CoCreateInstance(
-                &CLSID_TF_InputProcessorProfiles,
-                None::<&IUnknown>,
-                CLSCTX_INPROC_SERVER,
-            )
-            .ok()?;
+        // 获取前台窗口所在的线程 ID。虽然我们现在不 Attach，但保留逻辑以防未来需要其他线程相关操作
+        let _foreground_thread = GetWindowThreadProcessId(foreground, None);
+        
+        // 尝试获取活跃配置文件。
+        // 注意：不使用 AttachThreadInput。虽然在某些情况下这可能导致无法获取非当前线程的 TSF 详情，
+        // 但它能彻底避免在窗口切换（如使用 komorebi 时）导致的系统级死锁和“漏斗”光标。
+        let profiles: ITfInputProcessorProfiles = CoCreateInstance(
+            &CLSID_TF_InputProcessorProfiles,
+            None::<&IUnknown>,
+            CLSCTX_INPROC_SERVER,
+        )
+        .ok()?;
+        let profile_mgr: ITfInputProcessorProfileMgr = CoCreateInstance(
+            &CLSID_TF_InputProcessorProfiles,
+            None::<&IUnknown>,
+            CLSCTX_INPROC_SERVER,
+        )
+        .ok()?;
 
-            let mut profile = TF_INPUTPROCESSORPROFILE::default();
-            let input_method = profile_mgr
-                .GetActiveProfile(&GUID_TFCAT_TIP_KEYBOARD, &mut profile)
-                .ok()
-                .and_then(|_| {
-                    if profile.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR {
-                        let description = profiles
-                            .GetLanguageProfileDescription(
-                                &profile.clsid,
-                                profile.langid,
-                                &profile.guidProfile,
-                            )
-                            .ok()
-                            .map(|value| value.to_string());
-                        let mapped = map_tsf_profile_label(
-                            &format!("{:?}", profile.clsid),
-                            &format!("{:?}", profile.guidProfile),
-                            description.as_deref(),
-                        );
-                        Some(mapped.unwrap_or_else(|| {
-                            compact_input_method_label(description.as_deref().unwrap_or("?"))
-                        }))
-                    } else {
-                        Some(layout_label_from_hkl(profile.hkl))
-                    }
-                });
-
-            Some(input_method)
-        })
-        .unwrap_or(None);
+        let mut profile = TF_INPUTPROCESSORPROFILE::default();
+        let input_method = profile_mgr
+            .GetActiveProfile(&GUID_TFCAT_TIP_KEYBOARD, &mut profile)
+            .ok()
+            .and_then(|_| {
+                if profile.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR {
+                    let description = profiles
+                        .GetLanguageProfileDescription(
+                            &profile.clsid,
+                            profile.langid,
+                            &profile.guidProfile,
+                        )
+                        .ok()
+                        .map(|value| value.to_string());
+                    let mapped = map_tsf_profile_label(
+                        &format!("{:?}", profile.clsid),
+                        &format!("{:?}", profile.guidProfile),
+                        description.as_deref(),
+                    );
+                    Some(mapped.unwrap_or_else(|| {
+                        compact_input_method_label(description.as_deref().unwrap_or("?"))
+                    }))
+                } else {
+                    Some(layout_label_from_hkl(profile.hkl))
+                }
+            });
 
         Some(TsfStatus { input_method })
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn with_foreground_thread_input_attached<T>(foreground_thread: u32, f: impl FnOnce() -> T) -> T {
-    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
-
-    unsafe {
-        let current_thread = GetCurrentThreadId();
-        let attached = foreground_thread != 0
-            && foreground_thread != current_thread
-            && AttachThreadInput(current_thread, foreground_thread, true).as_bool();
-        let result = f();
-        if attached {
-            let _ = AttachThreadInput(current_thread, foreground_thread, false);
-        }
-        result
     }
 }
 
