@@ -158,17 +158,20 @@ impl IndicatorOverlayApp {
         self.screen_px_rect_to_overlay_rect(x, y, w, h, pixels_per_point)
     }
 
-    fn top_left_bubble_pos(&self, screen: Rect, anchor: Pos2, size: Vec2) -> Pos2 {
+    fn bottom_left_bubble_pos(&self, screen: Rect, anchor: Pos2, size: Vec2) -> Pos2 {
+        // 默认放在鼠标左下方
         let mut pos = Pos2::new(
             anchor.x - size.x - MOUSE_GAP_X,
-            anchor.y - size.y - MOUSE_GAP_Y,
+            anchor.y + MOUSE_GAP_Y,
         );
 
+        // 左侧超出屏幕则移到右侧
         if pos.x < screen.left() + SCREEN_MARGIN {
             pos.x = anchor.x + MOUSE_GAP_X;
         }
-        if pos.y < screen.top() + SCREEN_MARGIN {
-            pos.y = anchor.y + MOUSE_GAP_Y;
+        // 下侧超出屏幕则移到上侧
+        if pos.y + size.y > screen.bottom() - SCREEN_MARGIN {
+            pos.y = anchor.y - size.y - MOUSE_GAP_Y;
         }
 
         pos.x = pos.x.clamp(
@@ -182,14 +185,20 @@ impl IndicatorOverlayApp {
         pos
     }
 
-    fn bottom_right_bubble_pos(&self, screen: Rect, anchor: Pos2, size: Vec2) -> Pos2 {
-        let mut pos = Pos2::new(anchor.x + MOUSE_GAP_X, anchor.y + MOUSE_GAP_Y);
+    fn top_right_bubble_pos(&self, screen: Rect, anchor: Pos2, size: Vec2) -> Pos2 {
+        // 默认放在鼠标右上方
+        let mut pos = Pos2::new(
+            anchor.x + MOUSE_GAP_X,
+            anchor.y - size.y - MOUSE_GAP_Y,
+        );
 
+        // 右侧超出屏幕则移到左侧
         if pos.x + size.x > screen.right() - SCREEN_MARGIN {
             pos.x = anchor.x - size.x - MOUSE_GAP_X;
         }
-        if pos.y + size.y > screen.bottom() - SCREEN_MARGIN {
-            pos.y = anchor.y - size.y - MOUSE_GAP_Y;
+        // 上侧超出屏幕则移到下侧
+        if pos.y < screen.top() + SCREEN_MARGIN {
+            pos.y = anchor.y + MOUSE_GAP_Y;
         }
 
         pos.x = pos.x.clamp(
@@ -243,7 +252,7 @@ impl IndicatorOverlayApp {
 
         let pos = if mouse_mode {
             let screen = mouse_screen.unwrap_or_else(|| painter.clip_rect());
-            self.top_left_bubble_pos(
+            self.bottom_left_bubble_pos(
                 screen,
                 Pos2::new(anchor_x + offset_x + bubble_width * 0.5, anchor_y + offset_y),
                 Vec2::new(bubble_width, bubble_height),
@@ -287,8 +296,7 @@ impl IndicatorOverlayApp {
         let padding = Vec2::new(10.0, 6.0);
         let size = Vec2::new(galley.rect.width(), galley.rect.height()) + padding * 2.0;
         
-        let mouse_shifted = Pos2::new(mouse.x + size.x * 0.5, mouse.y);
-        let pos = self.bottom_right_bubble_pos(screen, mouse_shifted, size);
+        let pos = self.top_right_bubble_pos(screen, mouse, size);
 
         let rect = Rect::from_min_size(pos, size);
         painter.rect_filled(rect, CORNER_RADIUS, background_color());

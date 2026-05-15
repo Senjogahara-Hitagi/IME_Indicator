@@ -232,6 +232,7 @@ static CONFIG: OnceLock<Config> = OnceLock::new();
 pub fn get() -> &'static Config { CONFIG.get_or_init(load_config) }
 
 pub fn state_poll_interval_ms() -> u64 { get().poll_state_interval_ms }
+#[allow(dead_code)]
 pub fn track_poll_interval_ms() -> u64 { get().poll_track_interval_ms }
 pub fn tray_enable() -> bool { get().tray_enable }
 pub fn caret_enable() -> bool { get().caret_enable }

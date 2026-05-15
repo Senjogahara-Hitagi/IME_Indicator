@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use egui::{Color32, FontId, Pos2, Rect, Vec2};
 use egui_render_three_d::ThreeDBackend as DefaultGfxBackend;
@@ -36,7 +36,7 @@ fn main() {
 }
 
 #[derive(Clone, Debug)]
-struct SystemStatus {
+pub struct SystemStatus {
     cursor_visible: bool,
     input_method: String,
 }
